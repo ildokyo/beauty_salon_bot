@@ -26,7 +26,7 @@ def init_db():
             )
         ''')
         
-        # Таблица мастеров (с категориями услуг)
+        # Таблица мастеров
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS masters (
                 master_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,7 +90,7 @@ def init_db():
             )
         ''')
         
-        # Добавляем тестовые данные (мастера и услуги)
+        # Добавляем тестовые данные
         cursor.execute("SELECT COUNT(*) FROM masters")
         if cursor.fetchone()[0] == 0:
             masters_data = [
@@ -153,11 +153,19 @@ def get_service(service_id):
         cursor.execute('SELECT * FROM services WHERE service_id = ?', (service_id,))
         return cursor.fetchone()
 
-def get_masters_by_category(category):
-    """Получает мастеров по категории услуг"""
+def get_all_masters(include_inactive=False):
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute('SELECT * FROM masters WHERE service_category = ? AND is_active = 1', (category,))
+        if include_inactive:
+            cursor.execute('SELECT * FROM masters ORDER BY master_id')
+        else:
+            cursor.execute('SELECT * FROM masters WHERE is_active = 1 ORDER BY master_id')
+        return cursor.fetchall()
+
+def get_active_masters():
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM masters WHERE is_active = 1 ORDER BY master_id')
         return cursor.fetchall()
 
 def get_master(master_id):
@@ -166,8 +174,13 @@ def get_master(master_id):
         cursor.execute('SELECT * FROM masters WHERE master_id = ?', (master_id,))
         return cursor.fetchone()
 
+def get_masters_by_category(category):
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM masters WHERE service_category = ? AND is_active = 1', (category,))
+        return cursor.fetchall()
+
 def get_free_slots(master_id, date_str):
-    """Получает свободные слоты мастера на конкретную дату"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
@@ -190,7 +203,7 @@ def add_booking(client_id, master_id, service_id, schedule_id, date, time):
         cursor.execute('''
             INSERT INTO bookings (client_id, master_id, service_id, schedule_id, booking_date, booking_time)
             VALUES (?, ?, ?, ?, ?, ?)
-        ''', (client_id, master_id, service_id, schedule_id, format_date(date), time))
+        ''', (client_id, master_id, service_id, schedule_id, date, time))
         
         conn.commit()
         return cursor.lastrowid
@@ -234,7 +247,6 @@ def cancel_booking(booking_id, client_id):
         return False
 
 def get_tomorrow_bookings():
-    from utils import get_tomorrow_str
     tomorrow_str = get_tomorrow_str()
     
     with get_db_connection() as conn:
@@ -276,6 +288,22 @@ def get_all_admins():
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM admins')
         return cursor.fetchall()
+
+def delete_master(master_id):
+    """Мягкое удаление мастера (скрыть)"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('UPDATE masters SET is_active = 0 WHERE master_id = ?', (master_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+
+def restore_master(master_id):
+    """Восстановление мастера"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('UPDATE masters SET is_active = 1 WHERE master_id = ?', (master_id,))
+        conn.commit()
+        return cursor.rowcount > 0
 
 def add_master(name, specialization, category):
     with get_db_connection() as conn:

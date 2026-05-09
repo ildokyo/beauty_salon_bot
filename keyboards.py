@@ -1,7 +1,6 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
 def get_main_keyboard():
-    """Главная клавиатура для клиента"""
     kb = [
         [KeyboardButton(text="💇‍♀️ Услуги"), KeyboardButton(text="👨‍🎨 Мастера")],
         [KeyboardButton(text="📅 Записаться"), KeyboardButton(text="📋 Мои записи")],
@@ -10,27 +9,38 @@ def get_main_keyboard():
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
 def get_admin_keyboard():
-    """Клавиатура для администратора"""
     kb = [
-        [KeyboardButton(text="➕ Добавить мастера"), KeyboardButton(text="➕ Добавить услугу")],
-        [KeyboardButton(text="📅 Добавить расписание"), KeyboardButton(text="📋 Все записи")],
-        [KeyboardButton(text="👥 Управление админами"), KeyboardButton(text="🚪 Выйти из админки")],
-        [KeyboardButton(text="◀️ Клиентское меню")]
+        [KeyboardButton(text="👨‍🎨 Управление мастерами")],
+        [KeyboardButton(text="➕ Добавить услугу"), KeyboardButton(text="📅 Добавить расписание")],
+        [KeyboardButton(text="📋 Все записи"), KeyboardButton(text="👥 Управление админами")],
+        [KeyboardButton(text="🚪 Выйти из админки"), KeyboardButton(text="◀️ Клиентское меню")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
+
+def get_masters_management_keyboard():
+    kb = [
+        [KeyboardButton(text="➕ Добавить мастера")],
+        [KeyboardButton(text="🗑 Удалить мастера")],
+        [KeyboardButton(text="🔄 Восстановить мастера")],
+        [KeyboardButton(text="📋 Список мастеров")],
+        [KeyboardButton(text="🔙 Назад в админку")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
+
+def get_admin_management_keyboard():
+    kb = [
+        [KeyboardButton(text="➕ Добавить админа")],
+        [KeyboardButton(text="🗑 Удалить админа")],
+        [KeyboardButton(text="📋 Список админов")],
+        [KeyboardButton(text="🔙 Назад в админку")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
 def get_cancel_keyboard():
-    """Клавиатура с кнопкой Отмена"""
     kb = [[KeyboardButton(text="❌ Отмена")]]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
-def get_back_keyboard():
-    """Клавиатура с кнопкой Назад"""
-    kb = [[KeyboardButton(text="🔙 Назад")]]
-    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
-
 def get_services_inline_keyboard(services):
-    """Инлайн-клавиатура для выбора услуги"""
     keyboard = []
     for service in services:
         btn_text = f"{service['name']} - {service['price']}₽ ({service['duration_min']} мин)"
@@ -39,7 +49,6 @@ def get_services_inline_keyboard(services):
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 def get_masters_inline_keyboard(masters):
-    """Инлайн-клавиатура для выбора мастера"""
     keyboard = []
     for master in masters:
         keyboard.append([InlineKeyboardButton(
@@ -51,7 +60,6 @@ def get_masters_inline_keyboard(masters):
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 def get_slots_inline_keyboard(slots):
-    """Инлайн-клавиатура для выбора времени"""
     keyboard = []
     for slot in slots:
         keyboard.append([InlineKeyboardButton(
@@ -63,18 +71,7 @@ def get_slots_inline_keyboard(slots):
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 def get_booking_actions_keyboard(booking_id):
-    """Инлайн-клавиатура для действий с записью"""
     keyboard = [
         [InlineKeyboardButton(text="❌ Отменить запись", callback_data=f"cancel_booking_{booking_id}")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-def get_admin_management_keyboard():
-    """Клавиатура управления администраторами"""
-    kb = [
-        [KeyboardButton(text="➕ Добавить админа")],
-        [KeyboardButton(text="🗑 Удалить админа")],
-        [KeyboardButton(text="📋 Список админов")],
-        [KeyboardButton(text="🔙 Назад в админку")]
-    ]
-    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)

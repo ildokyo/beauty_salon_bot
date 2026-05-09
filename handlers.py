@@ -2,27 +2,22 @@ import logging
 from datetime import datetime, timedelta
 from aiogram import Router, F
 from aiogram.filters import Command, CommandStart
-from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove
+from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from database import *
 from keyboards import *
-from utils import get_izhevsk_now, get_tomorrow_str, parse_date, format_date
+from utils import get_izhevsk_now, get_tomorrow_str
 
 router = Router()
 logger = logging.getLogger(__name__)
 
-# Состояния FSM для записи
 class BookingStates(StatesGroup):
     waiting_for_service = State()
     waiting_for_master = State()
     waiting_for_date = State()
     waiting_for_time = State()
-    waiting_for_phone = State()
-
-# Состояния для добавления телефона
-class PhoneStates(StatesGroup):
     waiting_for_phone = State()
 
 # ============ ОСНОВНЫЕ КОМАНДЫ ============
@@ -85,7 +80,11 @@ async def cmd_services(message: Message):
 @router.message(Command("masters"))
 @router.message(F.text == "👨‍🎨 Мастера")
 async def cmd_masters(message: Message):
-    masters = get_all_masters()
+    masters = get_active_masters()
+    
+    if not masters:
+        await message.answer("😔 Мастера временно не добавлены")
+        return
     
     text = "👨‍🎨 *Наши мастера:*\n\n"
     for master in masters:
@@ -121,7 +120,6 @@ async def process_service_selection(callback: CallbackQuery, state: FSMContext):
     
     await state.update_data(service_id=service_id, service_name=service['name'], service_category=service['category'])
     
-    # Получаем мастеров по категории услуги
     masters = get_masters_by_category(service['category'])
     
     if not masters:
@@ -164,7 +162,6 @@ async def process_master_selection(callback: CallbackQuery, state: FSMContext):
 async def process_date(message: Message, state: FSMContext):
     date_str = message.text.strip()
     
-    # Проверяем формат даты
     try:
         selected_date = datetime.strptime(date_str, "%d.%m.%Y").date()
         today = get_izhevsk_now().date()
@@ -230,29 +227,26 @@ async def process_phone(message: Message, state: FSMContext):
     
     client = get_client(message.from_user.id)
     
-    # Обновляем телефон клиента
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('UPDATE clients SET phone = ? WHERE telegram_id = ?', 
                       (phone, message.from_user.id))
         conn.commit()
     
-    # Создаём запись
-    booking_id = add_booking(
-        client_id=client['client_id'],
-        master_id=data['master_id'],
-        service_id=data['service_id'],
-        schedule_id=data['schedule_id'],
-        date=data['booking_date'],
-        time=""  # Время будет взято из расписания
-    )
-    
-    # Получаем информацию о слоте
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT time_start FROM master_schedule WHERE schedule_id = ?', 
                       (data['schedule_id'],))
         slot = cursor.fetchone()
+    
+    add_booking(
+        client_id=client['client_id'],
+        master_id=data['master_id'],
+        service_id=data['service_id'],
+        schedule_id=data['schedule_id'],
+        date=data['booking_date'],
+        time=slot['time_start']
+    )
     
     await message.answer(
         f"✅ *Запись успешно создана!*\n\n"
@@ -290,17 +284,13 @@ async def cmd_my_bookings(message: Message):
             f"💰 Стоимость: {booking['price']}₽\n"
             f"📅 Дата: {booking['booking_date']}\n"
             f"⏰ Время: {booking['booking_time']}\n"
-            f"📊 Статус: {'✅ Подтверждена' if booking['status'] == 'confirmed' else '❌ Отменена'}\n"
         )
         
-        if booking['status'] == 'confirmed':
-            await message.answer(
-                text,
-                reply_markup=get_booking_actions_keyboard(booking['booking_id']),
-                parse_mode="Markdown"
-            )
-        else:
-            await message.answer(text, parse_mode="Markdown")
+        await message.answer(
+            text,
+            reply_markup=get_booking_actions_keyboard(booking['booking_id']),
+            parse_mode="Markdown"
+        )
 
 @router.callback_query(F.data.startswith("cancel_booking_"))
 async def cancel_booking_callback(callback: CallbackQuery):
@@ -318,11 +308,9 @@ async def cancel_booking_callback(callback: CallbackQuery):
 
 @router.message(Command("remindme"))
 async def cmd_remind_me(message: Message):
-    """Ручная проверка напоминаний о записях на завтра"""
-    telegram_id = message.from_user.id
     tomorrow_str = get_tomorrow_str()
     
-    bookings = get_client_bookings(telegram_id)
+    bookings = get_client_bookings(message.from_user.id)
     tomorrow_bookings = [b for b in bookings if b['booking_date'] == tomorrow_str]
     
     if not tomorrow_bookings:
@@ -372,12 +360,9 @@ async def cmd_contacts(message: Message):
 📧 *Email:* salon@butterfly.ru
 
 🕐 *График работы:* Пн-Вс: 09:00 - 21:00
-
-*Как добраться:* Остановка «Центральная», 5 минут пешком
     """
     await message.answer(text, parse_mode="Markdown")
 
-# Кнопки "Назад" и "Отмена"
 @router.callback_query(F.data == "cancel")
 async def cancel_callback(callback: CallbackQuery, state: FSMContext):
     await state.clear()
@@ -400,13 +385,13 @@ async def back_to_services(callback: CallbackQuery, state: FSMContext):
 async def back_to_masters(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     service = get_service(data['service_id'])
-    masters = get_masters_by_category(service['category'])
-    
-    await callback.message.edit_text(
-        f"✅ Выбрана услуга: *{service['name']}*\n\n"
-        f"👨‍🎨 *Выберите мастера:*",
-        reply_markup=get_masters_inline_keyboard(masters),
-        parse_mode="Markdown"
-    )
-    await state.set_state(BookingStates.waiting_for_master)
+    if service:
+        masters = get_masters_by_category(service['category'])
+        await callback.message.edit_text(
+            f"✅ Выбрана услуга: *{service['name']}*\n\n"
+            f"👨‍🎨 *Выберите мастера:*",
+            reply_markup=get_masters_inline_keyboard(masters),
+            parse_mode="Markdown"
+        )
+        await state.set_state(BookingStates.waiting_for_master)
     await callback.answer()

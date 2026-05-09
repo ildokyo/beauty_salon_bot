@@ -1,0 +1,8 @@
+venv/
+__pycache__/
+*.pyc
+.env
+beauty_salon.db
+.vscode/
+.DS_Store
+*.log

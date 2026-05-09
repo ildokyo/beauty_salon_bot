@@ -9,11 +9,9 @@ def get_izhevsk_now():
 def format_date(date_str):
     """Приводит дату к формату ДД.ММ.ГГГГ"""
     try:
-        # Если пришло в формате ГГГГ-ММ-ДД
         if '-' in date_str:
             date_obj = datetime.strptime(date_str, "%Y-%m-%d")
             return date_obj.strftime("%d.%m.%Y")
-        # Если уже в правильном формате
         date_obj = datetime.strptime(date_str, "%d.%m.%Y")
         return date_str
     except:
@@ -22,10 +20,8 @@ def format_date(date_str):
 def parse_date(date_str):
     """Преобразует ДД.ММ.ГГГГ в объект datetime"""
     try:
-        # Если пришло в формате YYYY-MM-DD
         if '-' in date_str:
             return datetime.strptime(date_str, "%Y-%m-%d").date()
-        # Если в формате DD.MM.YYYY
         return datetime.strptime(date_str, "%d.%m.%Y").date()
     except:
         return None

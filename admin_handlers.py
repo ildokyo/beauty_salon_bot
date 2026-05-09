@@ -2,7 +2,7 @@ import logging
 from datetime import datetime
 from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
@@ -12,7 +12,6 @@ from keyboards import *
 router = Router()
 logger = logging.getLogger(__name__)
 
-# Состояния для добавления
 class AddMasterStates(StatesGroup):
     waiting_for_name = State()
     waiting_for_specialization = State()
@@ -36,7 +35,13 @@ class AddAdminStates(StatesGroup):
 class RemoveAdminStates(StatesGroup):
     waiting_for_id = State()
 
-# ============ КОМАНДЫ АДМИНИСТРАТОРА ============
+class DeleteMasterStates(StatesGroup):
+    waiting_for_master_id = State()
+
+class RestoreMasterStates(StatesGroup):
+    waiting_for_master_id = State()
+
+# ============ ОСНОВНЫЕ КОМАНДЫ ============
 
 @router.message(Command("admin"))
 async def cmd_admin_panel(message: Message):
@@ -55,11 +60,6 @@ async def cmd_admin_panel(message: Message):
 
 @router.message(Command("becomeadmin"))
 async def cmd_become_admin(message: Message):
-    """Стать администратором (только по приглашению существующего админа)"""
-    if not is_admin(message.from_user.id):
-        await message.answer("❌ Только существующие администраторы могут добавлять новых.\nОбратитесь к тому, кто уже есть в админах.")
-        return
-    
     parts = message.text.split()
     if len(parts) < 2:
         await message.answer("❌ Используйте: /becomeadmin TELEGRAM_ID")
@@ -74,7 +74,6 @@ async def cmd_become_admin(message: Message):
 
 @router.message(F.text == "🚪 Выйти из админки")
 async def cmd_exit_admin(message: Message):
-    """Выход из режима администратора (просто переключает клавиатуру)"""
     await message.answer(
         "Вы вышли из панели администратора 👋",
         reply_markup=get_main_keyboard()
@@ -158,7 +157,6 @@ async def process_remove_admin(message: Message, state: FSMContext):
     try:
         admin_id = int(message.text.strip())
         
-        # Нельзя удалить самого себя
         if admin_id == message.from_user.id:
             await message.answer("❌ Нельзя удалить самого себя", reply_markup=get_admin_keyboard())
             await state.clear()
@@ -196,9 +194,21 @@ async def cmd_list_admins(message: Message):
 async def back_to_admin(message: Message):
     await message.answer("Возврат в панель администратора", reply_markup=get_admin_keyboard())
 
-# ============ ДОБАВЛЕНИЕ МАСТЕРОВ ============
+# ============ УПРАВЛЕНИЕ МАСТЕРАМИ ============
 
-@router.message(Command("add_master"))
+@router.message(F.text == "👨‍🎨 Управление мастерами")
+async def cmd_manage_masters(message: Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Доступно только администраторам")
+        return
+    
+    await message.answer(
+        "👨‍🎨 *Управление мастерами*\n\n"
+        "Выберите действие:",
+        reply_markup=get_masters_management_keyboard(),
+        parse_mode="Markdown"
+    )
+
 @router.message(F.text == "➕ Добавить мастера")
 async def cmd_add_master(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
@@ -248,9 +258,140 @@ async def add_master_category(message: Message, state: FSMContext):
     )
     await state.clear()
 
+@router.message(F.text == "🗑 Удалить мастера")
+async def cmd_delete_master_menu(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Доступно только администраторам")
+        return
+    
+    masters = get_all_masters(include_inactive=False)
+    
+    if not masters:
+        await message.answer("📭 Нет активных мастеров для удаления")
+        return
+    
+    text = "🗑 *Удаление мастера*\n\nСписок активных мастеров:\n"
+    for master in masters:
+        text += f"ID: {master['master_id']} — {master['name']} ({master['specialization']})\n"
+    
+    text += "\nВведите ID мастера для удаления:"
+    
+    await message.answer(text, parse_mode="Markdown", reply_markup=get_cancel_keyboard())
+    await state.set_state(DeleteMasterStates.waiting_for_master_id)
+
+@router.message(DeleteMasterStates.waiting_for_master_id)
+async def process_delete_master(message: Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("❌ Удаление отменено", reply_markup=get_admin_keyboard())
+        return
+    
+    try:
+        master_id = int(message.text.strip())
+        master = get_master(master_id)
+        
+        if not master:
+            await message.answer(f"❌ Мастер с ID {master_id} не найден")
+            await state.clear()
+            return
+        
+        if master['is_active'] == 0:
+            await message.answer(f"❌ Мастер {master['name']} уже удалён")
+            await state.clear()
+            return
+        
+        if delete_master(master_id):
+            await message.answer(
+                f"✅ Мастер {master['name']} (ID: {master_id}) скрыт!\n"
+                f"Он не будет отображаться клиентам, но записи сохранятся.\n"
+                f"Для восстановления используйте «🔄 Восстановить мастера»",
+                reply_markup=get_admin_keyboard()
+            )
+        else:
+            await message.answer(f"❌ Ошибка при удалении")
+        
+        await state.clear()
+    except ValueError:
+        await message.answer("❌ Введите ID мастера (число)", reply_markup=get_cancel_keyboard())
+
+@router.message(F.text == "🔄 Восстановить мастера")
+async def cmd_restore_master_menu(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Доступно только администраторам")
+        return
+    
+    masters = get_all_masters(include_inactive=True)
+    inactive_masters = [m for m in masters if m['is_active'] == 0]
+    
+    if not inactive_masters:
+        await message.answer("📭 Нет скрытых мастеров для восстановления")
+        return
+    
+    text = "🔄 *Восстановление мастера*\n\nСписок скрытых мастеров:\n"
+    for master in inactive_masters:
+        text += f"ID: {master['master_id']} — {master['name']} ({master['specialization']})\n"
+    
+    text += "\nВведите ID мастера для восстановления:"
+    
+    await message.answer(text, parse_mode="Markdown", reply_markup=get_cancel_keyboard())
+    await state.set_state(RestoreMasterStates.waiting_for_master_id)
+
+@router.message(RestoreMasterStates.waiting_for_master_id)
+async def process_restore_master(message: Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("❌ Восстановление отменено", reply_markup=get_admin_keyboard())
+        return
+    
+    try:
+        master_id = int(message.text.strip())
+        master = get_master(master_id)
+        
+        if not master:
+            await message.answer(f"❌ Мастер с ID {master_id} не найден")
+            await state.clear()
+            return
+        
+        if master['is_active'] == 1:
+            await message.answer(f"❌ Мастер {master['name']} уже активен")
+            await state.clear()
+            return
+        
+        if restore_master(master_id):
+            await message.answer(
+                f"✅ Мастер {master['name']} (ID: {master_id}) восстановлен!",
+                reply_markup=get_admin_keyboard()
+            )
+        else:
+            await message.answer(f"❌ Ошибка при восстановлении")
+        
+        await state.clear()
+    except ValueError:
+        await message.answer("❌ Введите ID мастера (число)", reply_markup=get_cancel_keyboard())
+
+@router.message(F.text == "📋 Список мастеров")
+async def cmd_list_masters(message: Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Доступно только администраторам")
+        return
+    
+    masters = get_all_masters(include_inactive=True)
+    
+    if not masters:
+        await message.answer("📭 Нет мастеров")
+        return
+    
+    text = "👨‍🎨 *Список всех мастеров:*\n\n"
+    for master in masters:
+        status = "✅ Активен" if master['is_active'] == 1 else "❌ Скрыт"
+        text += f"ID: {master['master_id']} — {master['name']}\n"
+        text += f"   Специализация: {master['specialization']}\n"
+        text += f"   Статус: {status}\n\n"
+    
+    await message.answer(text, parse_mode="Markdown", reply_markup=get_masters_management_keyboard())
+
 # ============ ДОБАВЛЕНИЕ УСЛУГ ============
 
-@router.message(Command("add_service"))
 @router.message(F.text == "➕ Добавить услугу")
 async def cmd_add_service(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
@@ -318,17 +459,16 @@ async def add_service_category(message: Message, state: FSMContext):
 
 # ============ ДОБАВЛЕНИЕ РАСПИСАНИЯ ============
 
-@router.message(Command("add_schedule"))
 @router.message(F.text == "📅 Добавить расписание")
 async def cmd_add_schedule(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
         await message.answer("⛔ Доступно только администраторам")
         return
     
-    masters = get_all_masters()
+    masters = get_all_masters(include_inactive=False)
     text = "👨‍🎨 *Выберите мастера (введите ID):*\n\n"
     for master in masters:
-        text += f"ID: {master['master_id']} - {master['name']} ({master['specialization']})\n"
+        text += f"ID: {master['master_id']} — {master['name']} ({master['specialization']})\n"
     
     await message.answer(text, parse_mode="Markdown", reply_markup=get_cancel_keyboard())
     await state.set_state(AddScheduleStates.waiting_for_master)
@@ -395,7 +535,6 @@ async def add_schedule_end(message: Message, state: FSMContext):
 
 # ============ ПРОСМОТР ВСЕХ ЗАПИСЕЙ ============
 
-@router.message(Command("all_bookings"))
 @router.message(F.text == "📋 Все записи")
 async def cmd_all_bookings(message: Message):
     if not is_admin(message.from_user.id):
