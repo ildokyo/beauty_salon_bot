@@ -3,6 +3,7 @@ import logging
 import sys
 from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand
+from aiogram.client.default import DefaultBotProperties
 
 from config import BOT_TOKEN
 from database import init_db
@@ -16,7 +17,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-bot = Bot(token=BOT_TOKEN)
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
 async def setup_commands():
@@ -27,7 +28,6 @@ async def setup_commands():
         BotCommand(command="book", description="📅 Записаться"),
         BotCommand(command="mybookings", description="📋 Мои записи"),
         BotCommand(command="help", description="📖 Помощь"),
-        BotCommand(command="admin", description="👑 Админ панель"),
     ]
     await bot.set_my_commands(commands)
 

@@ -57,7 +57,7 @@ def setup_scheduler():
         
         scheduler.add_job(
             send_daily_reminders,
-            trigger=CronTrigger(hour=19, minute=0),      #время для уведомление
+            trigger=CronTrigger(hour=19, minute=0),
             id="daily_reminders",
             replace_existing=True
         )
