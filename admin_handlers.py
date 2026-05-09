@@ -58,19 +58,40 @@ async def cmd_admin_panel(message: Message):
             reply_markup=get_main_keyboard()
         )
 
+# ============ КОМАНДА СТАТЬ АДМИНИСТРАТОРОМ ============
+
 @router.message(Command("becomeadmin"))
 async def cmd_become_admin(message: Message):
+    """Стать администратором по секретному коду"""
     parts = message.text.split()
     if len(parts) < 2:
-        await message.answer("❌ Используйте: /becomeadmin TELEGRAM_ID")
+        await message.answer(
+            "❌ Введи код: /becomeadmin КОД\n\n"
+            "Код: SALON2026"
+        )
         return
     
-    try:
-        new_admin_id = int(parts[1])
-        add_admin(new_admin_id)
-        await message.answer(f"✅ Пользователь {new_admin_id} добавлен как администратор")
-    except ValueError:
-        await message.answer("❌ Неверный ID")
+    code = parts[1]
+    ADMIN_SECRET_CODE = "SALON2026"
+    
+    if code == ADMIN_SECRET_CODE:
+        add_admin(message.from_user.id)
+        await message.answer(
+            "✅ *Вы стали администратором!*\n\n"
+            "Теперь вам доступны команды:\n"
+            "• /admin — панель администратора\n"
+            "• /add_master — добавить мастера\n"
+            "• /add_service — добавить услугу\n"
+            "• /add_schedule — добавить расписание\n"
+            "• /all_bookings — все записи",
+            parse_mode="Markdown"
+        )
+    else:
+        await message.answer(
+            "❌ *Неверный код доступа!*\n\n"
+            "Попробуйте: /becomeadmin SALON2026",
+            parse_mode="Markdown"
+        )
 
 @router.message(F.text == "🚪 Выйти из админки")
 async def cmd_exit_admin(message: Message):
