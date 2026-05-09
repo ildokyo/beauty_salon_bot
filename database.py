@@ -2,6 +2,7 @@ import sqlite3
 import logging
 from datetime import datetime, timedelta
 from utils import get_izhevsk_now, format_date
+import math
 
 DB_NAME = "beauty_salon.db"
 logger = logging.getLogger(__name__)
@@ -200,6 +201,8 @@ def get_free_slots(master_id, date_str):
         print(f"DEBUG: Найдено слотов: {len(slots)}")  # Для отладки
         return slots
 
+import math
+
 def add_booking_with_duration(client_id, master_id, service_id, schedule_id, date, time, duration_min):
     """Создаёт запись и блокирует нужное количество слотов"""
     with get_db_connection() as conn:
@@ -212,8 +215,8 @@ def add_booking_with_duration(client_id, master_id, service_id, schedule_id, dat
         if not slot:
             return None
         
-        # Рассчитываем, сколько слотов нужно заблокировать
-        slots_to_block = duration_min // 30  # 60 мин -> 2 слота, 90 мин -> 3 слота
+        # Рассчитываем, сколько слотов нужно заблокировать (округляем вверх)
+        slots_to_block = math.ceil(duration_min / 30)
         
         # Находим все слоты, которые нужно заблокировать
         cursor.execute('''
