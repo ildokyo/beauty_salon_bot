@@ -85,8 +85,18 @@ async def cmd_become_admin(message: Message):
     
     if code == ADMIN_SECRET_CODE:
         add_admin(message.from_user.id)
+        
+        # Отправляем сообщение об успехе
         await message.answer(
-            "✅ *Вы стали администратором!*\n\nТеперь вам доступна команда /admin",
+            "✅ *Вы стали администратором!*\n\n"
+            "Открываю панель управления...",
+            parse_mode="Markdown"
+        )
+        
+        # АВТОМАТИЧЕСКИ ПОКАЗЫВАЕМ АДМИН-ПАНЕЛЬ (без команды /admin)
+        await message.answer(
+            "👑 *Панель администратора*\n\nВыберите действие:",
+            reply_markup=get_admin_keyboard(),
             parse_mode="Markdown"
         )
     else:
@@ -804,39 +814,54 @@ async def cmd_add_schedule(message: Message, state: FSMContext):
 async def add_schedule_master(message: Message, state: FSMContext):
     if message.text == "❌ Отмена":
         await state.clear()
-        await message.answer("❌ Добавление отменено", reply_markup=get_admin_keyboard())
+        await message.answer("❌ Добавление расписания отменено", reply_markup=get_admin_keyboard())
         return
     
     try:
         master_id = int(message.text)
         await state.update_data(master_id=master_id)
-        await message.answer("📅 Введите дату в формате ДД.ММ.ГГГГ (например: 25.05.2026):")
+        await message.answer("📅 Введите дату в формате ДД.ММ.ГГГГ (например: 25.05.2026):", reply_markup=get_cancel_keyboard())
         await state.set_state(AddScheduleStates.waiting_for_date)
     except ValueError:
         await message.answer("❌ Введите ID мастера (число)", reply_markup=get_cancel_keyboard())
 
 @router.message(AddScheduleStates.waiting_for_date)
 async def add_schedule_date(message: Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("❌ Добавление расписания отменено", reply_markup=get_admin_keyboard())
+        return
+    
     try:
         datetime.strptime(message.text, "%d.%m.%Y")
         await state.update_data(date=message.text)
-        await message.answer("⏰ Введите время начала в формате ЧЧ:ММ (например: 10:00):")
+        await message.answer("⏰ Введите время начала в формате ЧЧ:ММ (например: 10:00):", reply_markup=get_cancel_keyboard())
         await state.set_state(AddScheduleStates.waiting_for_start_time)
     except ValueError:
-        await message.answer("❌ Неверный формат даты. Используйте ДД.ММ.ГГГГ")
+        await message.answer("❌ Неверный формат даты. Используйте ДД.ММ.ГГГГ", reply_markup=get_cancel_keyboard())
 
 @router.message(AddScheduleStates.waiting_for_start_time)
 async def add_schedule_start(message: Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("❌ Добавление расписания отменено", reply_markup=get_admin_keyboard())
+        return
+    
     try:
         datetime.strptime(message.text, "%H:%M")
         await state.update_data(start_time=message.text)
-        await message.answer("⏰ Введите время окончания в формате ЧЧ:ММ (например: 18:00):")
+        await message.answer("⏰ Введите время окончания в формате ЧЧ:ММ (например: 18:00):", reply_markup=get_cancel_keyboard())
         await state.set_state(AddScheduleStates.waiting_for_end_time)
     except ValueError:
-        await message.answer("❌ Неверный формат времени. Используйте ЧЧ:ММ")
+        await message.answer("❌ Неверный формат времени. Используйте ЧЧ:ММ", reply_markup=get_cancel_keyboard())
 
 @router.message(AddScheduleStates.waiting_for_end_time)
 async def add_schedule_end(message: Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("❌ Добавление расписания отменено", reply_markup=get_admin_keyboard())
+        return
+    
     try:
         datetime.strptime(message.text, "%H:%M")
         data = await state.get_data()
@@ -858,7 +883,7 @@ async def add_schedule_end(message: Message, state: FSMContext):
         )
         await state.clear()
     except ValueError:
-        await message.answer("❌ Неверный формат времени. Используйте ЧЧ:ММ")
+        await message.answer("❌ Неверный формат времени. Используйте ЧЧ:ММ", reply_markup=get_cancel_keyboard())
 
 # ============ ПРОСМОТР ВСЕХ ЗАПИСЕЙ ============
 

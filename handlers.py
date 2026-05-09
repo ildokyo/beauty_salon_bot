@@ -32,19 +32,42 @@ async def cmd_start(message: Message):
     
     if not client:
         add_client(user.id, user.first_name)
+    
+    # Проверяем, админ ли пользователь
+    if is_admin(user.id):
+        # Для админов показываем меню с кнопкой "👑 Админ панель"
+        kb = [
+            [KeyboardButton(text="💇‍♀️ Услуги"), KeyboardButton(text="👨‍🎨 Мастера")],
+            [KeyboardButton(text="📅 Записаться"), KeyboardButton(text="📋 Мои записи")],
+            [KeyboardButton(text="ℹ️ О салоне"), KeyboardButton(text="📞 Контакты")],
+            [KeyboardButton(text="👑 Админ панель")]
+        ]
+        reply_markup = ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
+        
         await message.answer(
-            f"👋 Добро пожаловать в салон красоты «Бабочка», {user.first_name}!\n\n"
-            f"💇‍♀️ Нажмите «Услуги», чтобы посмотреть цены\n"
-            f"📅 «Записаться» — чтобы выбрать время\n"
-            f"📋 «Мои записи» — чтобы посмотреть или отменить запись\n\n"
-            f"Команда /help — список всех команд",
-            reply_markup=get_main_keyboard()
+            f"👋 Добро пожаловать, *{user.first_name}*!\n\n"
+            f"У вас есть права администратора. Нажмите «👑 Админ панель» для управления.",
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
         )
     else:
+        # Обычное меню для клиентов
         await message.answer(
-            f"С возвращением, {user.first_name}! 👋\n\nЧем могу помочь сегодня?",
+            f"👋 Добро пожаловать в салон красоты «Бабочка», {user.first_name}!",
             reply_markup=get_main_keyboard()
         )
+
+@router.message(F.text == "👑 Админ панель")
+async def admin_button_panel(message: Message):
+    """Кнопка для открытия админ-панели (только для админов)"""
+    if is_admin(message.from_user.id):
+        await message.answer(
+            "👑 *Панель администратора*\n\nВыберите действие:",
+            reply_markup=get_admin_keyboard(),
+            parse_mode="Markdown"
+        )
+    else:
+        await message.answer("⛔ У вас нет прав администратора")
 
 @router.message(Command("help"))
 async def cmd_help(message: Message):
