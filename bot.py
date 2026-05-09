@@ -26,7 +26,6 @@ async def setup_commands():
         BotCommand(command="masters", description="👨‍🎨 Мастера"),
         BotCommand(command="book", description="📅 Записаться"),
         BotCommand(command="mybookings", description="📋 Мои записи"),
-        BotCommand(command="remindme", description="⏰ Напоминания"),
         BotCommand(command="help", description="📖 Помощь"),
         BotCommand(command="admin", description="👑 Админ панель"),
     ]

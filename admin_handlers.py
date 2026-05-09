@@ -744,3 +744,150 @@ async def cmd_list_services_admin(message: Message):
         text += f"   Статус: {status}\n\n"
     
     await message.answer(text, parse_mode="Markdown", reply_markup=get_services_management_keyboard())
+
+# Состояние для записи клиента админом
+class AdminBookingStates(StatesGroup):
+    waiting_for_client_id = State()
+    waiting_for_service = State()
+    waiting_for_master = State()
+    waiting_for_date = State()
+    waiting_for_time = State()
+
+@router.message(F.text == "📝 Записать клиента")
+async def cmd_admin_booking(message: Message, state: FSMContext):
+    """Администратор записывает клиента"""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Доступно только администраторам")
+        return
+    
+    await message.answer(
+        "📝 *Запись клиента через администратора*\n\n"
+        "Введите Telegram ID клиента или номер телефона:\n"
+        "Пример: 123456789 или +79123456789\n\n"
+        "Если не знаете — пропустите, введёте имя позже",
+        reply_markup=get_cancel_keyboard(),
+        parse_mode="Markdown"
+    )
+    await state.set_state(AdminBookingStates.waiting_for_client_id)
+
+@router.message(AdminBookingStates.waiting_for_client_id)
+async def admin_booking_client(message: Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("❌ Операция отменена", reply_markup=get_admin_keyboard())
+        return
+    
+    client_id = message.text.strip()
+    await state.update_data(client_identifier=client_id)
+    
+    services = get_all_services()
+    await message.answer(
+        "💇‍♀️ *Выберите услугу:*",
+        reply_markup=get_services_inline_keyboard(services),
+        parse_mode="Markdown"
+    )
+    await state.set_state(AdminBookingStates.waiting_for_service)
+
+@router.callback_query(AdminBookingStates.waiting_for_service, F.data.startswith("service_"))
+async def admin_booking_service(callback: CallbackQuery, state: FSMContext):
+    service_id = int(callback.data.split("_")[1])
+    service = get_service(service_id)
+    
+    await state.update_data(service_id=service_id, service_name=service['name'], service_category=service['category'])
+    
+    masters = get_masters_by_category(service['category'])
+    await callback.message.edit_text(
+        f"✅ Услуга: {service['name']}\n\n👨‍🎨 *Выберите мастера:*",
+        reply_markup=get_masters_inline_keyboard(masters),
+        parse_mode="Markdown"
+    )
+    await state.set_state(AdminBookingStates.waiting_for_master)
+    await callback.answer()
+
+@router.callback_query(AdminBookingStates.waiting_for_master, F.data.startswith("master_"))
+async def admin_booking_master(callback: CallbackQuery, state: FSMContext):
+    master_id = int(callback.data.split("_")[1])
+    master = get_master(master_id)
+    
+    await state.update_data(master_id=master_id, master_name=master['name'])
+    
+    await callback.message.edit_text(
+        f"✅ Мастер: {master['name']}\n\n"
+        f"📅 *Введите дату в формате ДД.ММ.ГГГГ*",
+        parse_mode="Markdown"
+    )
+    await state.set_state(AdminBookingStates.waiting_for_date)
+    await callback.answer()
+
+@router.message(AdminBookingStates.waiting_for_date)
+async def admin_booking_date(message: Message, state: FSMContext):
+    date_str = message.text.strip()
+    
+    try:
+        datetime.strptime(date_str, "%d.%m.%Y")
+        await state.update_data(booking_date=date_str)
+        
+        data = await state.get_data()
+        free_slots = get_free_slots(data['master_id'], date_str)
+        
+        if not free_slots:
+            await message.answer("❌ Нет свободных слотов на эту дату")
+            return
+        
+        await message.answer(
+            f"📅 Дата: {date_str}\n\n⏰ *Выберите время:*",
+            reply_markup=get_slots_inline_keyboard(free_slots),
+            parse_mode="Markdown"
+        )
+        await state.set_state(AdminBookingStates.waiting_for_time)
+    except:
+        await message.answer("❌ Неверный формат даты")
+
+@router.callback_query(AdminBookingStates.waiting_for_time, F.data.startswith("slot_"))
+async def admin_booking_time(callback: CallbackQuery, state: FSMContext):
+    schedule_id = int(callback.data.split("_")[1])
+    
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT time_start FROM master_schedule WHERE schedule_id = ?', (schedule_id,))
+        slot = cursor.fetchone()
+    
+    data = await state.get_data()
+    
+    # Ищем клиента
+    client = get_client_by_identifier(data['client_identifier'])
+    
+    if not client:
+        await callback.message.edit_text(
+            f"✅ Время: {slot['time_start']}\n\n"
+            f"📝 *Введите ИМЯ клиента* (так как клиент не найден в базе):",
+            parse_mode="Markdown"
+        )
+        await state.update_data(schedule_id=schedule_id, booking_time=slot['time_start'], need_name=True)
+        await state.set_state(AdminBookingStates.waiting_for_time)
+    else:
+        await finish_admin_booking(callback.message, state, client['client_id'], schedule_id, slot['time_start'], data)
+    
+    await callback.answer()
+
+async def finish_admin_booking(message, state, client_id, schedule_id, time, data):
+    booking_id = add_booking_with_duration(
+        client_id=client_id,
+        master_id=data['master_id'],
+        service_id=data['service_id'],
+        schedule_id=schedule_id,
+        date=data['booking_date'],
+        time=time,
+        duration_min=60  # или получить из услуги
+    )
+    
+    await message.answer(
+        f"✅ *Запись создана администратором!*\n\n"
+        f"💇‍♀️ Услуга: {data['service_name']}\n"
+        f"👨‍🎨 Мастер: {data['master_name']}\n"
+        f"📅 Дата: {data['booking_date']}\n"
+        f"⏰ Время: {time}",
+        reply_markup=get_admin_keyboard(),
+        parse_mode="Markdown"
+    )
+    await state.clear()

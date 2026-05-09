@@ -20,6 +20,7 @@ class BookingStates(StatesGroup):
     waiting_for_master = State()
     waiting_for_date = State()
     waiting_for_time = State()
+    waiting_for_name = State()      
     waiting_for_phone = State()
 
 # ============ ОСНОВНЫЕ КОМАНДЫ ============
@@ -233,6 +234,7 @@ async def process_master_selection(callback: CallbackQuery, state: FSMContext):
 async def process_slot_selection(callback: CallbackQuery, state: FSMContext):
     """Обработка выбора времени"""
     try:
+        # Извлекаем ID из callback_data
         parts = callback.data.split("_")
         if len(parts) < 2:
             await callback.answer("❌ Ошибка: неверный формат данных")
@@ -240,6 +242,7 @@ async def process_slot_selection(callback: CallbackQuery, state: FSMContext):
         
         schedule_id = int(parts[1])
         
+        # Получаем информацию о времени
         with get_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT schedule_id, time_start, time_end FROM master_schedule WHERE schedule_id = ?', (schedule_id,))
@@ -249,28 +252,60 @@ async def process_slot_selection(callback: CallbackQuery, state: FSMContext):
             await callback.answer("❌ Слот не найден", show_alert=True)
             return
         
+        # Сохраняем данные
         await state.update_data(schedule_id=schedule_id, booking_time=slot['time_start'])
         
         # Удаляем сообщение с кнопками выбора времени
         await callback.message.delete()
         
-        # Отправляем новое сообщение с запросом телефона
+        # Отправляем новое сообщение с запросом ИМЕНИ
         await callback.message.answer(
             f"✅ Время выбрано: *{slot['time_start']}*\n\n"
-            f"📱 *Укажите ваш номер телефона*\n"
-            f"Пример: +7 (912) 123-45-67\n\n"
+            f"📝 *Как вас зовут?*\n"
+            f"(Напишите ваше имя, пожалуйста)\n\n"
+            f"Пример: Анна\n\n"
             f"Или нажмите «Отмена»",
             reply_markup=get_cancel_keyboard(),
             parse_mode="Markdown"
         )
-        await state.set_state(BookingStates.waiting_for_phone)
+        await state.set_state(BookingStates.waiting_for_name)
         await callback.answer(f"✅ Выбрано время: {slot['time_start']}")
-        logger.info(f"Пользователь выбрал слот {schedule_id}, время {slot['time_start']}")
+        logger.info(f"Пользователь выбрал слот {schedule_id}, время {slot['time_start']}, запрашиваем имя")
         
+    except ValueError as e:
+        logger.error(f"Ошибка преобразования ID: {e}")
+        await callback.answer("❌ Ошибка: неверный ID", show_alert=True)
     except Exception as e:
         logger.error(f"Ошибка в process_slot_selection: {e}")
         logger.error(traceback.format_exc())
         await callback.answer("❌ Произошла ошибка, попробуйте позже", show_alert=True)
+
+@router.message(BookingStates.waiting_for_name)
+async def process_name(message: Message, state: FSMContext):
+    """Обработка ввода имени клиента"""
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("❌ Запись отменена", reply_markup=get_main_keyboard())
+        return
+    
+    name = message.text.strip()
+    
+    if not name:
+        await message.answer("❌ Пожалуйста, введите ваше имя или нажмите «Отмена»")
+        return
+    
+    await state.update_data(client_name=name)
+    
+    await message.answer(
+        f"✅ Спасибо, {name}!\n\n"
+        f"📱 *Укажите ваш номер телефона*\n"
+        f"Пример: +7 (912) 123-45-67\n\n"
+        f"Или нажмите «Отмена»",
+        reply_markup=get_cancel_keyboard(),
+        parse_mode="Markdown"
+    )
+    await state.set_state(BookingStates.waiting_for_phone)
+    logger.info(f"Пользователь ввёл имя: {name}")
 
 @router.message(BookingStates.waiting_for_date)
 async def process_date(message: Message, state: FSMContext):
@@ -345,7 +380,8 @@ async def process_phone(message: Message, state: FSMContext):
     
     data = await state.get_data()
     
-    required_fields = ['master_id', 'service_id', 'schedule_id', 'booking_date', 'booking_time']
+    # Проверяем, что все данные есть
+    required_fields = ['master_id', 'service_id', 'schedule_id', 'booking_date', 'booking_time', 'client_name']
     for field in required_fields:
         if field not in data:
             await message.answer(f"❌ Ошибка: не хватает данных. Начните запись заново: /book")
@@ -353,11 +389,19 @@ async def process_phone(message: Message, state: FSMContext):
             return
     
     client = get_client(message.from_user.id)
+    client_name = data.get('client_name', message.from_user.first_name)
     
     if not client:
-        await message.answer("❌ Ошибка: пользователь не найден. Напишите /start")
-        await state.clear()
-        return
+        # Создаём нового клиента
+        add_client(message.from_user.id, client_name, phone)
+        client = get_client(message.from_user.id)
+    else:
+        # Обновляем имя и телефон существующего клиента
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('UPDATE clients SET name = ?, phone = ? WHERE telegram_id = ?', 
+                          (client_name, phone, message.from_user.id))
+            conn.commit()
     
     # Получаем длительность услуги
     service = get_service(data['service_id'])
@@ -368,15 +412,8 @@ async def process_phone(message: Message, state: FSMContext):
     
     duration_min = service['duration_min']
     
-    # Обновляем телефон клиента
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('UPDATE clients SET phone = ? WHERE telegram_id = ?', 
-                      (phone, message.from_user.id))
-        conn.commit()
-    
     try:
-        # Используем новую функцию с учётом длительности
+        # Создаём запись с учётом длительности
         booking_id = add_booking_with_duration(
             client_id=client['client_id'],
             master_id=data['master_id'],
@@ -398,6 +435,7 @@ async def process_phone(message: Message, state: FSMContext):
         
         await message.answer(
             f"✅ *Запись успешно создана!*\n\n"
+            f"👤 Имя: {client_name}\n"
             f"💇‍♀️ Услуга: {data.get('service_name', 'Не указана')}\n"
             f"👨‍🎨 Мастер: {data.get('master_name', 'Не указан')}\n"
             f"📅 Дата: {data['booking_date']}\n"
@@ -410,10 +448,11 @@ async def process_phone(message: Message, state: FSMContext):
             reply_markup=get_main_keyboard()
         )
         
-        logger.info(f"Создана запись #{booking_id} для клиента {message.from_user.id}, длительность {duration_min} мин")
+        logger.info(f"Создана запись #{booking_id} для клиента {message.from_user.id} ({client_name}), длительность {duration_min} мин")
         
     except Exception as e:
         logger.error(f"Ошибка при создании записи: {e}")
+        logger.error(traceback.format_exc())
         await message.answer("❌ Ошибка при создании записи. Попробуйте позже.")
     
     await state.clear()
@@ -473,30 +512,6 @@ async def cancel_booking_callback(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Ошибка отмены записи: {e}")
         await callback.answer("❌ Произошла ошибка", show_alert=True)
-
-@router.message(Command("remindme"))
-async def cmd_remind_me(message: Message):
-    tomorrow_str = get_tomorrow_str()
-    
-    bookings = get_client_bookings(message.from_user.id)
-    tomorrow_bookings = [b for b in bookings if b['booking_date'] == tomorrow_str]
-    
-    if not tomorrow_bookings:
-        await message.answer(
-            "📭 У вас нет записей на завтра.\n\n"
-            "Хотите записаться? Используйте команду /book",
-            reply_markup=get_main_keyboard()
-        )
-        return
-    
-    text = f"📢 *Ваши записи на завтра ({tomorrow_str}):*\n\n"
-    for b in tomorrow_bookings:
-        text += f"💇‍♀️ {b['service_name']}\n"
-        text += f"👨‍🎨 {b['master_name']}\n"
-        text += f"⏰ {b['booking_time']}\n\n"
-    text += "✨ Ждём вас в салоне!"
-    
-    await message.answer(text, parse_mode="Markdown")
 
 @router.message(F.text == "ℹ️ О салоне")
 async def cmd_about(message: Message):
