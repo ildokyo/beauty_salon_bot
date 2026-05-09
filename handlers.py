@@ -359,6 +359,16 @@ async def process_phone(message: Message, state: FSMContext):
         await state.clear()
         return
     
+    # Получаем длительность услуги
+    service = get_service(data['service_id'])
+    if not service:
+        await message.answer("❌ Услуга не найдена")
+        await state.clear()
+        return
+    
+    duration_min = service['duration_min']
+    
+    # Обновляем телефон клиента
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('UPDATE clients SET phone = ? WHERE telegram_id = ?', 
@@ -366,14 +376,25 @@ async def process_phone(message: Message, state: FSMContext):
         conn.commit()
     
     try:
-        booking_id = add_booking(
+        # Используем новую функцию с учётом длительности
+        booking_id = add_booking_with_duration(
             client_id=client['client_id'],
             master_id=data['master_id'],
             service_id=data['service_id'],
             schedule_id=data['schedule_id'],
             date=data['booking_date'],
-            time=data['booking_time']
+            time=data['booking_time'],
+            duration_min=duration_min
         )
+        
+        if not booking_id:
+            await message.answer(
+                "❌ К сожалению, выбранное время уже недоступно.\n"
+                "Пожалуйста, выберите другое время через /book",
+                reply_markup=get_main_keyboard()
+            )
+            await state.clear()
+            return
         
         await message.answer(
             f"✅ *Запись успешно создана!*\n\n"
@@ -381,6 +402,7 @@ async def process_phone(message: Message, state: FSMContext):
             f"👨‍🎨 Мастер: {data.get('master_name', 'Не указан')}\n"
             f"📅 Дата: {data['booking_date']}\n"
             f"⏰ Время: {data['booking_time']}\n"
+            f"⏱ Длительность: {duration_min} мин\n"
             f"📞 Телефон: {phone}\n\n"
             f"✨ Я напомню о записи за день до визита.\n"
             f"Изменить или отменить запись можно через «Мои записи»",
@@ -388,7 +410,7 @@ async def process_phone(message: Message, state: FSMContext):
             reply_markup=get_main_keyboard()
         )
         
-        logger.info(f"Создана запись #{booking_id} для клиента {message.from_user.id}")
+        logger.info(f"Создана запись #{booking_id} для клиента {message.from_user.id}, длительность {duration_min} мин")
         
     except Exception as e:
         logger.error(f"Ошибка при создании записи: {e}")

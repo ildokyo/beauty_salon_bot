@@ -200,16 +200,45 @@ def get_free_slots(master_id, date_str):
         print(f"DEBUG: Найдено слотов: {len(slots)}")  # Для отладки
         return slots
 
-def add_booking(client_id, master_id, service_id, schedule_id, date, time):
+def add_booking_with_duration(client_id, master_id, service_id, schedule_id, date, time, duration_min):
+    """Создаёт запись и блокирует нужное количество слотов"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         
-        cursor.execute('''
-            UPDATE master_schedule 
-            SET is_booked = 1, booking_id = ?
-            WHERE schedule_id = ?
-        ''', (cursor.lastrowid, schedule_id))
+        # Получаем время выбранного слота
+        cursor.execute('SELECT time_start, time_end FROM master_schedule WHERE schedule_id = ?', (schedule_id,))
+        slot = cursor.fetchone()
         
+        if not slot:
+            return None
+        
+        # Рассчитываем, сколько слотов нужно заблокировать
+        slots_to_block = duration_min // 30  # 60 мин -> 2 слота, 90 мин -> 3 слота
+        
+        # Находим все слоты, которые нужно заблокировать
+        cursor.execute('''
+            SELECT schedule_id, time_start 
+            FROM master_schedule 
+            WHERE master_id = ? AND work_date = ? AND time_start >= ? AND is_booked = 0
+            ORDER BY time_start
+            LIMIT ?
+        ''', (master_id, date, slot['time_start'], slots_to_block))
+        
+        slots = cursor.fetchall()
+        
+        if len(slots) < slots_to_block:
+            # Недостаточно свободных слотов подряд
+            return None
+        
+        # Блокируем все найденные слоты
+        for s in slots:
+            cursor.execute('''
+                UPDATE master_schedule 
+                SET is_booked = 1, booking_id = ?
+                WHERE schedule_id = ?
+            ''', (cursor.lastrowid, s['schedule_id']))
+        
+        # Создаём запись (привязываем к первому слоту)
         cursor.execute('''
             INSERT INTO bookings (client_id, master_id, service_id, schedule_id, booking_date, booking_time)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -217,6 +246,55 @@ def add_booking(client_id, master_id, service_id, schedule_id, date, time):
         
         conn.commit()
         return cursor.lastrowid
+
+def cancel_booking_with_slots(booking_id, client_id):
+    """Отменяет запись и освобождает все связанные слоты"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Получаем информацию о записи
+        cursor.execute('SELECT schedule_id, master_id, booking_date, booking_time FROM bookings WHERE booking_id = ? AND client_id = ?', 
+                      (booking_id, client_id))
+        booking = cursor.fetchone()
+        
+        if not booking:
+            return False
+        
+        # Получаем длительность услуги
+        cursor.execute('''
+            SELECT s.duration_min FROM bookings b
+            JOIN services s ON b.service_id = s.service_id
+            WHERE b.booking_id = ?
+        ''', (booking_id,))
+        service = cursor.fetchone()
+        
+        duration_min = service['duration_min'] if service else 60
+        slots_to_free = duration_min // 30
+        
+        # Находим все слоты, связанные с этой записью
+        cursor.execute('''
+            SELECT schedule_id FROM master_schedule 
+            WHERE master_id = ? AND work_date = ? AND time_start >= ? AND is_booked = 1
+            ORDER BY time_start
+            LIMIT ?
+        ''', (booking['master_id'], booking['booking_date'], booking['booking_time'], slots_to_free))
+        
+        slots = cursor.fetchall()
+        
+        for slot in slots:
+            cursor.execute('''
+                UPDATE master_schedule 
+                SET is_booked = 0, booking_id = NULL
+                WHERE schedule_id = ?
+            ''', (slot['schedule_id'],))
+        
+        cursor.execute('''
+            UPDATE bookings SET status = 'cancelled'
+            WHERE booking_id = ?
+        ''', (booking_id,))
+        
+        conn.commit()
+        return True
 
 def get_client_bookings(telegram_id):
     with get_db_connection() as conn:
