@@ -1,18 +1,17 @@
 import sqlite3
 import logging
 from datetime import datetime, timedelta
+from utils import get_izhevsk_now, format_date
 
 DB_NAME = "beauty_salon.db"
 logger = logging.getLogger(__name__)
 
 def get_db_connection():
-    """Возвращает соединение с базой данных"""
     conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
     return conn
 
 def init_db():
-    """Создаёт все таблицы, если их нет"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         
@@ -27,12 +26,13 @@ def init_db():
             )
         ''')
         
-        # Таблица мастеров
+        # Таблица мастеров (с категориями услуг)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS masters (
                 master_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 specialization TEXT,
+                service_category TEXT,
                 is_active INTEGER DEFAULT 1
             )
         ''')
@@ -44,6 +44,7 @@ def init_db():
                 name TEXT NOT NULL,
                 duration_min INTEGER NOT NULL,
                 price INTEGER NOT NULL,
+                category TEXT,
                 is_active INTEGER DEFAULT 1
             )
         ''')
@@ -89,33 +90,34 @@ def init_db():
             )
         ''')
         
-        # Добавляем тестовые данные, если таблицы пустые
-        cursor.execute("SELECT COUNT(*) FROM services")
-        if cursor.fetchone()[0] == 0:
-            services_data = [
-                ("Стрижка женская", 60, 1500),
-                ("Стрижка мужская", 30, 800),
-                ("Окрашивание", 120, 3000),
-                ("Маникюр", 60, 1200),
-                ("Педикюр", 90, 1800),
-                ("Укладка", 45, 1000),
-            ]
-            cursor.executemany(
-                "INSERT INTO services (name, duration_min, price) VALUES (?, ?, ?)",
-                services_data
-            )
-        
+        # Добавляем тестовые данные (мастера и услуги)
         cursor.execute("SELECT COUNT(*) FROM masters")
         if cursor.fetchone()[0] == 0:
             masters_data = [
-                ("Анна", "Парикмахер-стилист"),
-                ("Елена", "Мастер маникюра"),
-                ("Мария", "Колорист"),
-                ("Ольга", "Мастер педикюра"),
+                ("Анна Петрова", "Парикмахер-стилист", "hair"),
+                ("Елена Смирнова", "Старший парикмахер", "hair"),
+                ("Мария Иванова", "Мастер маникюра", "nails"),
+                ("Ольга Кузнецова", "Мастер педикюра", "nails"),
             ]
             cursor.executemany(
-                "INSERT INTO masters (name, specialization) VALUES (?, ?)",
+                "INSERT INTO masters (name, specialization, service_category) VALUES (?, ?, ?)",
                 masters_data
+            )
+        
+        cursor.execute("SELECT COUNT(*) FROM services")
+        if cursor.fetchone()[0] == 0:
+            services_data = [
+                ("Стрижка женская", 60, 1500, "hair"),
+                ("Стрижка мужская", 30, 800, "hair"),
+                ("Окрашивание", 120, 3000, "hair"),
+                ("Укладка", 45, 1000, "hair"),
+                ("Маникюр", 60, 1200, "nails"),
+                ("Педикюр", 90, 1800, "nails"),
+                ("Покрытие гель-лак", 60, 1500, "nails"),
+            ]
+            cursor.executemany(
+                "INSERT INTO services (name, duration_min, price, category) VALUES (?, ?, ?, ?)",
+                services_data
             )
         
         conn.commit()
@@ -124,7 +126,6 @@ def init_db():
 # ============ ФУНКЦИИ ДЛЯ КЛИЕНТОВ ============
 
 def add_client(telegram_id, name, phone=None):
-    """Добавляет нового клиента"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
@@ -135,41 +136,37 @@ def add_client(telegram_id, name, phone=None):
         return cursor.lastrowid
 
 def get_client(telegram_id):
-    """Получает информацию о клиенте"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM clients WHERE telegram_id = ?', (telegram_id,))
         return cursor.fetchone()
 
 def get_all_services():
-    """Получает список всех активных услуг"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM services WHERE is_active = 1 ORDER BY price')
         return cursor.fetchall()
 
 def get_service(service_id):
-    """Получает услугу по ID"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM services WHERE service_id = ?', (service_id,))
         return cursor.fetchone()
 
-def get_all_masters():
-    """Получает список всех активных мастеров"""
+def get_masters_by_category(category):
+    """Получает мастеров по категории услуг"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute('SELECT * FROM masters WHERE is_active = 1')
+        cursor.execute('SELECT * FROM masters WHERE service_category = ? AND is_active = 1', (category,))
         return cursor.fetchall()
 
 def get_master(master_id):
-    """Получает мастера по ID"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM masters WHERE master_id = ?', (master_id,))
         return cursor.fetchone()
 
-def get_free_slots(master_id, date):
+def get_free_slots(master_id, date_str):
     """Получает свободные слоты мастера на конкретную дату"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
@@ -177,32 +174,28 @@ def get_free_slots(master_id, date):
             SELECT * FROM master_schedule 
             WHERE master_id = ? AND work_date = ? AND is_booked = 0
             ORDER BY time_start
-        ''', (master_id, date))
+        ''', (master_id, date_str))
         return cursor.fetchall()
 
 def add_booking(client_id, master_id, service_id, schedule_id, date, time):
-    """Создаёт новую запись"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         
-        # Помечаем слот как занятый
         cursor.execute('''
             UPDATE master_schedule 
             SET is_booked = 1, booking_id = ?
             WHERE schedule_id = ?
         ''', (cursor.lastrowid, schedule_id))
         
-        # Создаём запись
         cursor.execute('''
             INSERT INTO bookings (client_id, master_id, service_id, schedule_id, booking_date, booking_time)
             VALUES (?, ?, ?, ?, ?, ?)
-        ''', (client_id, master_id, service_id, schedule_id, date, time))
+        ''', (client_id, master_id, service_id, schedule_id, format_date(date), time))
         
         conn.commit()
         return cursor.lastrowid
 
 def get_client_bookings(telegram_id):
-    """Получает все записи клиента"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
@@ -217,24 +210,20 @@ def get_client_bookings(telegram_id):
         return cursor.fetchall()
 
 def cancel_booking(booking_id, client_id):
-    """Отменяет запись"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         
-        # Получаем schedule_id
         cursor.execute('SELECT schedule_id FROM bookings WHERE booking_id = ? AND client_id = ?', 
                       (booking_id, client_id))
         result = cursor.fetchone()
         
         if result:
-            # Освобождаем слот
             cursor.execute('''
                 UPDATE master_schedule 
                 SET is_booked = 0, booking_id = NULL
                 WHERE schedule_id = ?
             ''', (result['schedule_id'],))
             
-            # Отменяем запись
             cursor.execute('''
                 UPDATE bookings SET status = 'cancelled'
                 WHERE booking_id = ?
@@ -245,60 +234,73 @@ def cancel_booking(booking_id, client_id):
         return False
 
 def get_tomorrow_bookings():
-    """Получает записи на завтра для напоминаний"""
-    tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+    from utils import get_tomorrow_str
+    tomorrow_str = get_tomorrow_str()
     
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT b.*, c.telegram_id, c.name as client_name, 
+            SELECT b.*, c.telegram_id, c.name as client_name,
                    s.name as service_name, m.name as master_name
             FROM bookings b
             JOIN clients c ON b.client_id = c.client_id
             JOIN services s ON b.service_id = s.service_id
             JOIN masters m ON b.master_id = m.master_id
             WHERE b.booking_date = ? AND b.status = 'confirmed'
-        ''', (tomorrow,))
+        ''', (tomorrow_str,))
         return cursor.fetchall()
 
 # ============ ФУНКЦИИ ДЛЯ АДМИНИСТРАТОРОВ ============
 
 def is_admin(telegram_id):
-    """Проверяет, является ли пользователь администратором"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM admins WHERE telegram_id = ?', (telegram_id,))
         return cursor.fetchone() is not None
 
 def add_admin(telegram_id):
-    """Добавляет администратора"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('INSERT OR IGNORE INTO admins (telegram_id) VALUES (?)', (telegram_id,))
         conn.commit()
 
-def add_master(name, specialization):
-    """Добавляет нового мастера"""
+def remove_admin(telegram_id):
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute('INSERT INTO masters (name, specialization) VALUES (?, ?)', 
-                      (name, specialization))
+        cursor.execute('DELETE FROM admins WHERE telegram_id = ?', (telegram_id,))
         conn.commit()
-        return cursor.lastrowid
+        return cursor.rowcount > 0
 
-def add_service(name, duration_min, price):
-    """Добавляет новую услугу"""
+def get_all_admins():
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM admins')
+        return cursor.fetchall()
+
+def add_master(name, specialization, category):
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO services (name, duration_min, price) 
+            INSERT INTO masters (name, specialization, service_category) 
             VALUES (?, ?, ?)
-        ''', (name, duration_min, price))
+        ''', (name, specialization, category))
+        conn.commit()
+        return cursor.lastrowid
+
+def add_service(name, duration_min, price, category):
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO services (name, duration_min, price, category) 
+            VALUES (?, ?, ?, ?)
+        ''', (name, duration_min, price, category))
         conn.commit()
         return cursor.lastrowid
 
 def add_work_slots(master_id, date, start_time, end_time, interval_min=30):
-    """Добавляет рабочие слоты мастера на конкретную дату"""
+    date_obj = datetime.strptime(date, "%d.%m.%Y")
+    date_db = date_obj.strftime("%d.%m.%Y")
+    
     with get_db_connection() as conn:
         cursor = conn.cursor()
         
@@ -311,7 +313,7 @@ def add_work_slots(master_id, date, start_time, end_time, interval_min=30):
             cursor.execute('''
                 INSERT OR IGNORE INTO master_schedule (master_id, work_date, time_start, time_end)
                 VALUES (?, ?, ?, ?)
-            ''', (master_id, date, time_str, 
+            ''', (master_id, date_db, time_str, 
                   (current + timedelta(minutes=interval_min)).strftime("%H:%M")))
             slots_added += cursor.rowcount
             current += timedelta(minutes=interval_min)
@@ -320,11 +322,10 @@ def add_work_slots(master_id, date, start_time, end_time, interval_min=30):
         return slots_added
 
 def get_all_bookings_admin():
-    """Получает все записи (для администратора)"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT b.*, c.name as client_name, c.phone,
+            SELECT b.*, c.name as client_name, c.phone, c.telegram_id,
                    s.name as service_name, m.name as master_name
             FROM bookings b
             JOIN clients c ON b.client_id = c.client_id
