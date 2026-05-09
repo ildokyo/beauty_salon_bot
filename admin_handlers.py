@@ -584,3 +584,163 @@ async def cmd_all_bookings(message: Message):
     
     if text:
         await message.answer(text, parse_mode="Markdown")
+
+# ============ УПРАВЛЕНИЕ УСЛУГАМИ ============
+
+class DeleteServiceStates(StatesGroup):
+    waiting_for_service_id = State()
+
+class RestoreServiceStates(StatesGroup):
+    waiting_for_service_id = State()
+
+@router.message(F.text == "💇‍♀️ Управление услугами")
+async def cmd_manage_services(message: Message):
+    """Меню управления услугами"""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Доступно только администраторам")
+        return
+    
+    await message.answer(
+        "💇‍♀️ *Управление услугами*\n\n"
+        "Выберите действие:",
+        reply_markup=get_services_management_keyboard(),
+        parse_mode="Markdown"
+    )
+
+@router.message(F.text == "🗑 Удалить услугу")
+async def cmd_delete_service_menu(message: Message, state: FSMContext):
+    """Меню удаления услуги"""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Доступно только администраторам")
+        return
+    
+    services = get_all_services()
+    
+    if not services:
+        await message.answer("📭 Нет активных услуг для удаления")
+        return
+    
+    text = "🗑 *Удаление услуги*\n\nСписок активных услуг:\n"
+    for service in services:
+        text += f"ID: {service['service_id']} — {service['name']} — {service['price']}₽\n"
+    
+    text += "\nВведите ID услуги для удаления:"
+    
+    await message.answer(text, parse_mode="Markdown", reply_markup=get_cancel_keyboard())
+    await state.set_state(DeleteServiceStates.waiting_for_service_id)
+
+@router.message(DeleteServiceStates.waiting_for_service_id)
+async def process_delete_service(message: Message, state: FSMContext):
+    """Обработка удаления услуги"""
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("❌ Удаление отменено", reply_markup=get_admin_keyboard())
+        return
+    
+    try:
+        service_id = int(message.text.strip())
+        service = get_service(service_id)
+        
+        if not service:
+            await message.answer(f"❌ Услуга с ID {service_id} не найдена")
+            await state.clear()
+            return
+        
+        if service['is_active'] == 0:
+            await message.answer(f"❌ Услуга {service['name']} уже удалена")
+            await state.clear()
+            return
+        
+        if delete_service(service_id):
+            await message.answer(
+                f"✅ Услуга {service['name']} (ID: {service_id}) скрыта!\n"
+                f"Она не будет отображаться клиентам, но записи сохранятся.\n"
+                f"Для восстановления используйте «🔄 Восстановить услугу»",
+                reply_markup=get_admin_keyboard()
+            )
+        else:
+            await message.answer(f"❌ Ошибка при удалении")
+        
+        await state.clear()
+    except ValueError:
+        await message.answer("❌ Введите ID услуги (число)", reply_markup=get_cancel_keyboard())
+
+@router.message(F.text == "🔄 Восстановить услугу")
+async def cmd_restore_service_menu(message: Message, state: FSMContext):
+    """Меню восстановления услуги"""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Доступно только администраторам")
+        return
+    
+    services = get_all_services_with_inactive()
+    inactive_services = [s for s in services if s['is_active'] == 0]
+    
+    if not inactive_services:
+        await message.answer("📭 Нет скрытых услуг для восстановления")
+        return
+    
+    text = "🔄 *Восстановление услуги*\n\nСписок скрытых услуг:\n"
+    for service in inactive_services:
+        text += f"ID: {service['service_id']} — {service['name']} — {service['price']}₽\n"
+    
+    text += "\nВведите ID услуги для восстановления:"
+    
+    await message.answer(text, parse_mode="Markdown", reply_markup=get_cancel_keyboard())
+    await state.set_state(RestoreServiceStates.waiting_for_service_id)
+
+@router.message(RestoreServiceStates.waiting_for_service_id)
+async def process_restore_service(message: Message, state: FSMContext):
+    """Обработка восстановления услуги"""
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("❌ Восстановление отменено", reply_markup=get_admin_keyboard())
+        return
+    
+    try:
+        service_id = int(message.text.strip())
+        service = get_service(service_id)
+        
+        if not service:
+            await message.answer(f"❌ Услуга с ID {service_id} не найдена")
+            await state.clear()
+            return
+        
+        if service['is_active'] == 1:
+            await message.answer(f"❌ Услуга {service['name']} уже активна")
+            await state.clear()
+            return
+        
+        if restore_service(service_id):
+            await message.answer(
+                f"✅ Услуга {service['name']} (ID: {service_id}) восстановлена!",
+                reply_markup=get_admin_keyboard()
+            )
+        else:
+            await message.answer(f"❌ Ошибка при восстановлении")
+        
+        await state.clear()
+    except ValueError:
+        await message.answer("❌ Введите ID услуги (число)", reply_markup=get_cancel_keyboard())
+
+@router.message(F.text == "📋 Список услуг")
+async def cmd_list_services_admin(message: Message):
+    """Список всех услуг для администратора"""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Доступно только администраторам")
+        return
+    
+    services = get_all_services_with_inactive()
+    
+    if not services:
+        await message.answer("📭 Нет услуг")
+        return
+    
+    text = "💇‍♀️ *Список всех услуг:*\n\n"
+    for service in services:
+        status = "✅ Активна" if service['is_active'] == 1 else "❌ Скрыта"
+        text += f"ID: {service['service_id']} — {service['name']}\n"
+        text += f"   ⏱ {service['duration_min']} мин | 💰 {service['price']}₽\n"
+        text += f"   📂 Категория: {service['category']}\n"
+        text += f"   Статус: {status}\n\n"
+    
+    await message.answer(text, parse_mode="Markdown", reply_markup=get_services_management_keyboard())

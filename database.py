@@ -363,3 +363,27 @@ def get_all_bookings_admin():
             ORDER BY b.booking_date, b.booking_time
         ''')
         return cursor.fetchall()
+# ============ УПРАВЛЕНИЕ УСЛУГАМИ ============
+
+def delete_service(service_id):
+    """Мягкое удаление услуги (скрыть)"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('UPDATE services SET is_active = 0 WHERE service_id = ?', (service_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+
+def restore_service(service_id):
+    """Восстановление услуги"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('UPDATE services SET is_active = 1 WHERE service_id = ?', (service_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+
+def get_all_services_with_inactive():
+    """Получает все услуги (включая скрытые)"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM services ORDER BY service_id')
+        return cursor.fetchall()
