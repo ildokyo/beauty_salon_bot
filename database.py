@@ -181,14 +181,18 @@ def get_masters_by_category(category):
         return cursor.fetchall()
 
 def get_free_slots(master_id, date_str):
+    """Получает свободные слоты мастера на конкретную дату"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT * FROM master_schedule 
+            SELECT schedule_id, time_start, time_end 
+            FROM master_schedule 
             WHERE master_id = ? AND work_date = ? AND is_booked = 0
             ORDER BY time_start
         ''', (master_id, date_str))
-        return cursor.fetchall()
+        slots = cursor.fetchall()
+        print(f"DEBUG: Найдено слотов: {len(slots)}")  # Для отладки
+        return slots
 
 def add_booking(client_id, master_id, service_id, schedule_id, date, time):
     with get_db_connection() as conn:

@@ -1,4 +1,5 @@
 import logging
+import traceback
 from datetime import datetime, timedelta
 from aiogram import Router, F
 from aiogram.filters import Command, CommandStart
@@ -34,12 +35,13 @@ async def cmd_start(message: Message):
             f"👋 Добро пожаловать в салон красоты «Бабочка», {user.first_name}!\n\n"
             f"💇‍♀️ Нажмите «Услуги», чтобы посмотреть цены\n"
             f"📅 «Записаться» — чтобы выбрать время\n"
-            f"📋 «Мои записи» — чтобы посмотреть или отменить запись",
+            f"📋 «Мои записи» — чтобы посмотреть или отменить запись\n\n"
+            f"Команда /help — список всех команд",
             reply_markup=get_main_keyboard()
         )
     else:
         await message.answer(
-            f"С возвращением, {user.first_name}! 👋\nЧем могу помочь сегодня?",
+            f"С возвращением, {user.first_name}! 👋\n\nЧем могу помочь сегодня?",
             reply_markup=get_main_keyboard()
         )
 
@@ -49,18 +51,22 @@ async def cmd_help(message: Message):
 📖 *Команды бота:*
 
 /start — начать работу
-/services — список услуг
+/services — список услуг и цен
 /masters — список мастеров
 /book — записаться на услугу
 /mybookings — мои записи
 /remindme — напоминания на завтра
 /help — эта справка
 
+👑 *Административные команды:*
+/admin — панель администратора
+/becomeadmin КОД — стать администратором (код: SALON2026)
+
 📞 *Контакты салона:*
 Телефон: +7 (912) 123-45-67
 Адрес: г. Ижевск, ул. Пушкинская, 123
     """
-    await message.answer(help_text, parse_mode="Markdown")
+    await message.answer(help_text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 @router.message(Command("services"))
 @router.message(F.text == "💇‍♀️ Услуги")
@@ -110,11 +116,11 @@ async def cmd_book_start(message: Message, state: FSMContext):
         parse_mode="Markdown"
     )
     await state.set_state(BookingStates.waiting_for_service)
-    logger.info(f"Пользователь {message.from_user.id} начал запись, состояние: waiting_for_service")
+    logger.info(f"Пользователь {message.from_user.id} начал запись")
 
-# ============ ОБРАБОТЧИКИ CALLBACK (КНОПОК) ============
+# ============ ОБРАБОТЧИКИ CALLBACK (КНОПКИ) ============
 
-@router.callback_query(F.data.startswith("service_"))
+@router.callback_query(BookingStates.waiting_for_service, F.data.startswith("service_"))
 async def process_service_selection(callback: CallbackQuery, state: FSMContext):
     """Обработка выбора услуги"""
     try:
@@ -125,10 +131,17 @@ async def process_service_selection(callback: CallbackQuery, state: FSMContext):
             await callback.answer("Услуга не найдена")
             return
         
-        await state.update_data(service_id=service_id, service_name=service['name'], service_category=service['category'])
+        # Получаем категорию (с защитой от отсутствия поля)
+        category = service.get('category', 'hair')
+        
+        await state.update_data(
+            service_id=service_id, 
+            service_name=service['name'], 
+            service_category=category
+        )
         
         # Получаем мастеров по категории услуги
-        masters = get_masters_by_category(service['category'])
+        masters = get_masters_by_category(category)
         
         if not masters:
             await callback.message.edit_text(
@@ -147,13 +160,15 @@ async def process_service_selection(callback: CallbackQuery, state: FSMContext):
             parse_mode="Markdown"
         )
         await state.set_state(BookingStates.waiting_for_master)
-        await callback.answer(f"Выбрана услуга: {service['name']}")
+        await callback.answer(f"✅ Выбрана услуга: {service['name']}")
         logger.info(f"Пользователь выбрал услугу: {service['name']}")
+        
     except Exception as e:
         logger.error(f"Ошибка в process_service_selection: {e}")
-        await callback.answer("Произошла ошибка", show_alert=True)
+        logger.error(traceback.format_exc())
+        await callback.answer("❌ Произошла ошибка, попробуйте снова", show_alert=True)
 
-@router.callback_query(F.data.startswith("master_"))
+@router.callback_query(BookingStates.waiting_for_master, F.data.startswith("master_"))
 async def process_master_selection(callback: CallbackQuery, state: FSMContext):
     """Обработка выбора мастера"""
     try:
@@ -174,30 +189,40 @@ async def process_master_selection(callback: CallbackQuery, state: FSMContext):
             parse_mode="Markdown"
         )
         await state.set_state(BookingStates.waiting_for_date)
-        await callback.answer(f"Выбран мастер: {master['name']}")
+        await callback.answer(f"✅ Выбран мастер: {master['name']}")
         logger.info(f"Пользователь выбрал мастера: {master['name']}")
+        
     except Exception as e:
         logger.error(f"Ошибка в process_master_selection: {e}")
-        await callback.answer("Произошла ошибка", show_alert=True)
+        logger.error(traceback.format_exc())
+        await callback.answer("❌ Произошла ошибка, попробуйте снова", show_alert=True)
 
-@router.callback_query(F.data.startswith("slot_"))
+@router.callback_query(BookingStates.waiting_for_time, F.data.startswith("slot_"))
 async def process_slot_selection(callback: CallbackQuery, state: FSMContext):
     """Обработка выбора времени"""
     try:
-        schedule_id = int(callback.data.split("_")[1])
-        await state.update_data(schedule_id=schedule_id)
+        # Извлекаем ID из callback_data
+        parts = callback.data.split("_")
+        if len(parts) < 2:
+            await callback.answer("❌ Ошибка: неверный формат данных")
+            return
+        
+        schedule_id = int(parts[1])
         
         # Получаем информацию о времени
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute('SELECT time_start FROM master_schedule WHERE schedule_id = ?', (schedule_id,))
+            cursor.execute('SELECT schedule_id, time_start, time_end FROM master_schedule WHERE schedule_id = ?', (schedule_id,))
             slot = cursor.fetchone()
         
-        if slot:
-            await state.update_data(booking_time=slot['time_start'])
+        if not slot:
+            await callback.answer("❌ Слот не найден", show_alert=True)
+            return
+        
+        await state.update_data(schedule_id=schedule_id, booking_time=slot['time_start'])
         
         await callback.message.edit_text(
-            f"✅ Время выбрано!\n\n"
+            f"✅ Время выбрано: *{slot['time_start']}*\n\n"
             f"📱 *Укажите ваш номер телефона*\n"
             f"Пример: +7 (912) 123-45-67\n\n"
             f"Или нажмите «Отмена»",
@@ -205,71 +230,16 @@ async def process_slot_selection(callback: CallbackQuery, state: FSMContext):
             parse_mode="Markdown"
         )
         await state.set_state(BookingStates.waiting_for_phone)
-        await callback.answer("Время выбрано")
-        logger.info(f"Пользователь выбрал слот {schedule_id}")
+        await callback.answer(f"✅ Выбрано время: {slot['time_start']}")
+        logger.info(f"Пользователь выбрал слот {schedule_id}, время {slot['time_start']}")
+        
+    except ValueError as e:
+        logger.error(f"Ошибка преобразования ID: {e}")
+        await callback.answer("❌ Ошибка: неверный ID", show_alert=True)
     except Exception as e:
         logger.error(f"Ошибка в process_slot_selection: {e}")
-        await callback.answer("Произошла ошибка", show_alert=True)
-
-@router.callback_query(F.data == "cancel")
-async def cancel_callback(callback: CallbackQuery, state: FSMContext):
-    """Отмена действия"""
-    await state.clear()
-    await callback.message.edit_text("❌ Действие отменено")
-    await callback.message.answer("Возврат в главное меню", reply_markup=get_main_keyboard())
-    await callback.answer()
-
-@router.callback_query(F.data == "back_to_services")
-async def back_to_services(callback: CallbackQuery, state: FSMContext):
-    """Назад к выбору услуг"""
-    services = get_all_services()
-    await callback.message.edit_text(
-        "💇‍♀️ *Выберите услугу:*",
-        reply_markup=get_services_inline_keyboard(services),
-        parse_mode="Markdown"
-    )
-    await state.set_state(BookingStates.waiting_for_service)
-    await callback.answer()
-
-@router.callback_query(F.data == "back_to_masters")
-async def back_to_masters(callback: CallbackQuery, state: FSMContext):
-    """Назад к выбору мастера"""
-    data = await state.get_data()
-    service_id = data.get('service_id')
-    
-    if service_id:
-        service = get_service(service_id)
-        if service:
-            masters = get_masters_by_category(service['category'])
-            await callback.message.edit_text(
-                f"✅ Выбрана услуга: *{service['name']}*\n\n"
-                f"👨‍🎨 *Выберите мастера:*",
-                reply_markup=get_masters_inline_keyboard(masters),
-                parse_mode="Markdown"
-            )
-            await state.set_state(BookingStates.waiting_for_master)
-    await callback.answer()
-
-@router.callback_query(F.data.startswith("cancel_booking_"))
-async def cancel_booking_callback(callback: CallbackQuery):
-    """Отмена записи"""
-    try:
-        booking_id = int(callback.data.split("_")[2])
-        client = get_client(callback.from_user.id)
-        
-        if cancel_booking(booking_id, client['client_id']):
-            await callback.answer("✅ Запись отменена")
-            await callback.message.edit_text(
-                callback.message.text + "\n\n❌ Запись отменена",
-                reply_markup=None
-            )
-        else:
-            await callback.answer("❌ Ошибка при отмене", show_alert=True)
-    except Exception as e:
-        logger.error(f"Ошибка отмены записи: {e}")
-        await callback.answer("Ошибка", show_alert=True)
-
-# ============ ОБРАБОТКА ТЕКСТОВЫХ ВВОДОВ ============
+        logger.error(traceback.format_exc())
+        await callback.answer("❌ Произошла ошибка, попробуйте позже", show_alert=True)
 
 @router.message(BookingStates.waiting_for_date)
 async def process_date(message: Message, state: FSMContext):
@@ -295,23 +265,38 @@ async def process_date(message: Message, state: FSMContext):
     await state.update_data(booking_date=date_str)
     
     data = await state.get_data()
-    free_slots = get_free_slots(data['master_id'], date_str)
+    master_id = data.get('master_id')
+    master_name = data.get('master_name')
     
-    if not free_slots:
+    if not master_id:
+        await message.answer("❌ Ошибка: мастер не выбран. Начните запись заново: /book")
+        await state.clear()
+        return
+    
+    free_slots = get_free_slots(master_id, date_str)
+    
+    if not free_slots or len(free_slots) == 0:
         await message.answer(
-            f"😔 На {date_str} нет свободных слотов у мастера {data['master_name']}.\n"
-            f"Пожалуйста, выберите другую дату через /book"
+            f"😔 На {date_str} нет свободных слотов у мастера {master_name}.\n\n"
+            f"Пожалуйста, выберите другую дату через команду /book",
+            reply_markup=get_main_keyboard()
         )
         await state.clear()
+        return
+    
+    slots_keyboard = get_slots_inline_keyboard(free_slots)
+    if not slots_keyboard:
+        await message.answer("❌ Ошибка формирования клавиатуры с временем")
         return
     
     await message.answer(
         f"📅 Дата: {date_str}\n\n"
         f"⏰ *Выберите удобное время:*",
-        reply_markup=get_slots_inline_keyboard(free_slots),
+        reply_markup=slots_keyboard,
         parse_mode="Markdown"
     )
     await state.set_state(BookingStates.waiting_for_time)
+    logger.info(f"Пользователь {message.from_user.id} выбрал дату {date_str}, найдено слотов: {len(free_slots)}")
 
 @router.message(BookingStates.waiting_for_phone)
 async def process_phone(message: Message, state: FSMContext):
@@ -322,9 +307,27 @@ async def process_phone(message: Message, state: FSMContext):
         return
     
     phone = message.text.strip()
+    
+    if not phone:
+        await message.answer("❌ Введите номер телефона или нажмите «Отмена»")
+        return
+    
     data = await state.get_data()
     
+    # Проверяем, что все данные есть
+    required_fields = ['master_id', 'service_id', 'schedule_id', 'booking_date', 'booking_time']
+    for field in required_fields:
+        if field not in data:
+            await message.answer(f"❌ Ошибка: не хватает данных ({field}). Начните запись заново: /book")
+            await state.clear()
+            return
+    
     client = get_client(message.from_user.id)
+    
+    if not client:
+        await message.answer("❌ Ошибка: пользователь не найден. Напишите /start")
+        await state.clear()
+        return
     
     # Обновляем телефон клиента
     with get_db_connection() as conn:
@@ -334,27 +337,35 @@ async def process_phone(message: Message, state: FSMContext):
         conn.commit()
     
     # Создаём запись
-    add_booking(
-        client_id=client['client_id'],
-        master_id=data['master_id'],
-        service_id=data['service_id'],
-        schedule_id=data['schedule_id'],
-        date=data['booking_date'],
-        time=data.get('booking_time', '')
-    )
-    
-    await message.answer(
-        f"✅ *Запись успешно создана!*\n\n"
-        f"💇‍♀️ Услуга: {data['service_name']}\n"
-        f"👨‍🎨 Мастер: {data['master_name']}\n"
-        f"📅 Дата: {data['booking_date']}\n"
-        f"⏰ Время: {data.get('booking_time', '')}\n"
-        f"📞 Телефон: {phone}\n\n"
-        f"Я напомню о записи за день до визита.\n"
-        f"Изменить или отменить запись можно через «Мои записи»",
-        parse_mode="Markdown",
-        reply_markup=get_main_keyboard()
-    )
+    try:
+        booking_id = add_booking(
+            client_id=client['client_id'],
+            master_id=data['master_id'],
+            service_id=data['service_id'],
+            schedule_id=data['schedule_id'],
+            date=data['booking_date'],
+            time=data['booking_time']
+        )
+        
+        await message.answer(
+            f"✅ *Запись успешно создана!*\n\n"
+            f"💇‍♀️ Услуга: {data.get('service_name', 'Не указана')}\n"
+            f"👨‍🎨 Мастер: {data.get('master_name', 'Не указан')}\n"
+            f"📅 Дата: {data['booking_date']}\n"
+            f"⏰ Время: {data['booking_time']}\n"
+            f"📞 Телефон: {phone}\n\n"
+            f"✨ Я напомню о записи за день до визита.\n"
+            f"Изменить или отменить запись можно через «Мои записи»",
+            parse_mode="Markdown",
+            reply_markup=get_main_keyboard()
+        )
+        
+        logger.info(f"Создана запись #{booking_id} для клиента {message.from_user.id}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при создании записи: {e}")
+        logger.error(traceback.format_exc())
+        await message.answer("❌ Ошибка при создании записи. Попробуйте позже.")
     
     await state.clear()
 
@@ -387,6 +398,34 @@ async def cmd_my_bookings(message: Message):
             reply_markup=get_booking_actions_keyboard(booking['booking_id']),
             parse_mode="Markdown"
         )
+
+@router.callback_query(F.data.startswith("cancel_booking_"))
+async def cancel_booking_callback(callback: CallbackQuery):
+    """Отмена записи"""
+    try:
+        parts = callback.data.split("_")
+        if len(parts) < 3:
+            await callback.answer("❌ Ошибка: неверный формат")
+            return
+        
+        booking_id = int(parts[2])
+        client = get_client(callback.from_user.id)
+        
+        if not client:
+            await callback.answer("❌ Пользователь не найден")
+            return
+        
+        if cancel_booking(booking_id, client['client_id']):
+            await callback.answer("✅ Запись отменена")
+            await callback.message.edit_text(
+                callback.message.text + "\n\n❌ Запись отменена",
+                reply_markup=None
+            )
+        else:
+            await callback.answer("❌ Ошибка при отмене", show_alert=True)
+    except Exception as e:
+        logger.error(f"Ошибка отмены записи: {e}")
+        await callback.answer("❌ Произошла ошибка", show_alert=True)
 
 @router.message(Command("remindme"))
 async def cmd_remind_me(message: Message):
@@ -445,3 +484,45 @@ async def cmd_contacts(message: Message):
 🕐 *График работы:* Пн-Вс: 09:00 - 21:00
     """
     await message.answer(text, parse_mode="Markdown")
+
+# ============ КНОПКИ "НАЗАД" И "ОТМЕНА" ============
+
+@router.callback_query(F.data == "cancel")
+async def cancel_callback(callback: CallbackQuery, state: FSMContext):
+    """Отмена действия"""
+    await state.clear()
+    await callback.message.edit_text("❌ Действие отменено")
+    await callback.message.answer("Возврат в главное меню", reply_markup=get_main_keyboard())
+    await callback.answer()
+
+@router.callback_query(F.data == "back_to_services")
+async def back_to_services(callback: CallbackQuery, state: FSMContext):
+    """Назад к выбору услуг"""
+    services = get_all_services()
+    await callback.message.edit_text(
+        "💇‍♀️ *Выберите услугу:*",
+        reply_markup=get_services_inline_keyboard(services),
+        parse_mode="Markdown"
+    )
+    await state.set_state(BookingStates.waiting_for_service)
+    await callback.answer()
+
+@router.callback_query(F.data == "back_to_masters")
+async def back_to_masters(callback: CallbackQuery, state: FSMContext):
+    """Назад к выбору мастера"""
+    data = await state.get_data()
+    service_id = data.get('service_id')
+    
+    if service_id:
+        service = get_service(service_id)
+        if service:
+            category = service.get('category', 'hair')
+            masters = get_masters_by_category(category)
+            await callback.message.edit_text(
+                f"✅ Выбрана услуга: *{service['name']}*\n\n"
+                f"👨‍🎨 *Выберите мастера:*",
+                reply_markup=get_masters_inline_keyboard(masters),
+                parse_mode="Markdown"
+            )
+            await state.set_state(BookingStates.waiting_for_master)
+    await callback.answer()
