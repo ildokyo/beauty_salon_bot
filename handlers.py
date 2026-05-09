@@ -124,22 +124,44 @@ async def cmd_book_start(message: Message, state: FSMContext):
 async def process_service_selection(callback: CallbackQuery, state: FSMContext):
     """Обработка выбора услуги"""
     try:
-        service_id = int(callback.data.split("_")[1])
+        # Логируем полученный callback
+        logger.info(f"Получен callback: {callback.data}")
+        
+        # Извлекаем ID услуги
+        parts = callback.data.split("_")
+        if len(parts) < 2:
+            await callback.answer("❌ Ошибка: неверный формат данных")
+            return
+        
+        service_id = int(parts[1])
+        logger.info(f"ID услуги: {service_id}")
+        
+        # Получаем услугу из БД
         service = get_service(service_id)
         
         if not service:
-            await callback.answer("Услуга не найдена")
+            await callback.answer("❌ Услуга не найдена", show_alert=True)
             return
         
-        category = service.get('category', 'hair')
+        logger.info(f"Услуга найдена: {service['name']}")
         
+        # Получаем категорию (с защитой от отсутствия поля)
+        if isinstance(service, dict):
+            category = service.get('category', 'hair')
+        else:
+            # Если вернулся не словарь, а Row
+            category = service['category'] if 'category' in service.keys() else 'hair'
+        
+        # Сохраняем данные
         await state.update_data(
             service_id=service_id, 
             service_name=service['name'], 
             service_category=category
         )
         
+        # Получаем мастеров по категории услуги
         masters = get_masters_by_category(category)
+        logger.info(f"Найдено мастеров: {len(masters) if masters else 0}")
         
         if not masters:
             await callback.message.edit_text(
@@ -149,21 +171,35 @@ async def process_service_selection(callback: CallbackQuery, state: FSMContext):
             await callback.answer()
             return
         
+        # Создаем клавиатуру с мастерами
+        masters_kb = get_masters_inline_keyboard(masters)
+        
+        if not masters_kb:
+            await callback.answer("❌ Ошибка создания клавиатуры", show_alert=True)
+            return
+        
+        # Обновляем сообщение
         await callback.message.edit_text(
             f"✅ Выбрана услуга: *{service['name']}*\n"
             f"💰 Цена: {service['price']}₽\n"
             f"⏱ Длительность: {service['duration_min']} мин\n\n"
             f"👨‍🎨 *Выберите мастера:*",
-            reply_markup=get_masters_inline_keyboard(masters),
+            reply_markup=masters_kb,
             parse_mode="Markdown"
         )
         await state.set_state(BookingStates.waiting_for_master)
         await callback.answer(f"✅ Выбрана услуга: {service['name']}")
-        logger.info(f"Пользователь выбрал услугу: {service['name']}")
+        logger.info(f"Пользователь {callback.from_user.id} выбрал услугу: {service['name']}")
         
+    except ValueError as e:
+        error_msg = f"Ошибка преобразования ID: {e}"
+        logger.error(error_msg)
+        await callback.answer(f"❌ {error_msg}", show_alert=True)
     except Exception as e:
-        logger.error(f"Ошибка в process_service_selection: {e}")
-        await callback.answer("❌ Произошла ошибка", show_alert=True)
+        error_msg = str(e)
+        logger.error(f"Ошибка в process_service_selection: {error_msg}")
+        logger.error(traceback.format_exc())
+        await callback.answer(f"❌ Ошибка: {error_msg[:100]}", show_alert=True)
 
 @router.callback_query(BookingStates.waiting_for_master, F.data.startswith("master_"))
 async def process_master_selection(callback: CallbackQuery, state: FSMContext):

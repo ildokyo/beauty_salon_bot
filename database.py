@@ -148,10 +148,14 @@ def get_all_services():
         return cursor.fetchall()
 
 def get_service(service_id):
+    """Получает услугу по ID"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM services WHERE service_id = ?', (service_id,))
-        return cursor.fetchone()
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+        return None
 
 def get_all_masters(include_inactive=False):
     with get_db_connection() as conn:
@@ -175,10 +179,12 @@ def get_master(master_id):
         return cursor.fetchone()
 
 def get_masters_by_category(category):
+    """Получает мастеров по категории услуг"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM masters WHERE service_category = ? AND is_active = 1', (category,))
-        return cursor.fetchall()
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
 
 def get_free_slots(master_id, date_str):
     """Получает свободные слоты мастера на конкретную дату"""
