@@ -131,7 +131,6 @@ async def process_service_selection(callback: CallbackQuery, state: FSMContext):
             await callback.answer("Услуга не найдена")
             return
         
-        # Получаем категорию (с защитой от отсутствия поля)
         category = service.get('category', 'hair')
         
         await state.update_data(
@@ -140,7 +139,6 @@ async def process_service_selection(callback: CallbackQuery, state: FSMContext):
             service_category=category
         )
         
-        # Получаем мастеров по категории услуги
         masters = get_masters_by_category(category)
         
         if not masters:
@@ -165,8 +163,7 @@ async def process_service_selection(callback: CallbackQuery, state: FSMContext):
         
     except Exception as e:
         logger.error(f"Ошибка в process_service_selection: {e}")
-        logger.error(traceback.format_exc())
-        await callback.answer("❌ Произошла ошибка, попробуйте снова", show_alert=True)
+        await callback.answer("❌ Произошла ошибка", show_alert=True)
 
 @router.callback_query(BookingStates.waiting_for_master, F.data.startswith("master_"))
 async def process_master_selection(callback: CallbackQuery, state: FSMContext):
@@ -194,14 +191,12 @@ async def process_master_selection(callback: CallbackQuery, state: FSMContext):
         
     except Exception as e:
         logger.error(f"Ошибка в process_master_selection: {e}")
-        logger.error(traceback.format_exc())
-        await callback.answer("❌ Произошла ошибка, попробуйте снова", show_alert=True)
+        await callback.answer("❌ Произошла ошибка", show_alert=True)
 
 @router.callback_query(BookingStates.waiting_for_time, F.data.startswith("slot_"))
 async def process_slot_selection(callback: CallbackQuery, state: FSMContext):
     """Обработка выбора времени"""
     try:
-        # Извлекаем ID из callback_data
         parts = callback.data.split("_")
         if len(parts) < 2:
             await callback.answer("❌ Ошибка: неверный формат данных")
@@ -209,7 +204,6 @@ async def process_slot_selection(callback: CallbackQuery, state: FSMContext):
         
         schedule_id = int(parts[1])
         
-        # Получаем информацию о времени
         with get_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT schedule_id, time_start, time_end FROM master_schedule WHERE schedule_id = ?', (schedule_id,))
@@ -221,7 +215,11 @@ async def process_slot_selection(callback: CallbackQuery, state: FSMContext):
         
         await state.update_data(schedule_id=schedule_id, booking_time=slot['time_start'])
         
-        await callback.message.edit_text(
+        # Удаляем сообщение с кнопками выбора времени
+        await callback.message.delete()
+        
+        # Отправляем новое сообщение с запросом телефона
+        await callback.message.answer(
             f"✅ Время выбрано: *{slot['time_start']}*\n\n"
             f"📱 *Укажите ваш номер телефона*\n"
             f"Пример: +7 (912) 123-45-67\n\n"
@@ -233,9 +231,6 @@ async def process_slot_selection(callback: CallbackQuery, state: FSMContext):
         await callback.answer(f"✅ Выбрано время: {slot['time_start']}")
         logger.info(f"Пользователь выбрал слот {schedule_id}, время {slot['time_start']}")
         
-    except ValueError as e:
-        logger.error(f"Ошибка преобразования ID: {e}")
-        await callback.answer("❌ Ошибка: неверный ID", show_alert=True)
     except Exception as e:
         logger.error(f"Ошибка в process_slot_selection: {e}")
         logger.error(traceback.format_exc())
@@ -296,7 +291,7 @@ async def process_date(message: Message, state: FSMContext):
         parse_mode="Markdown"
     )
     await state.set_state(BookingStates.waiting_for_time)
-    logger.info(f"Пользователь {message.from_user.id} выбрал дату {date_str}, найдено слотов: {len(free_slots)}")
+    logger.info(f"Пользователь выбрал дату {date_str}, найдено слотов: {len(free_slots)}")
 
 @router.message(BookingStates.waiting_for_phone)
 async def process_phone(message: Message, state: FSMContext):
@@ -314,11 +309,10 @@ async def process_phone(message: Message, state: FSMContext):
     
     data = await state.get_data()
     
-    # Проверяем, что все данные есть
     required_fields = ['master_id', 'service_id', 'schedule_id', 'booking_date', 'booking_time']
     for field in required_fields:
         if field not in data:
-            await message.answer(f"❌ Ошибка: не хватает данных ({field}). Начните запись заново: /book")
+            await message.answer(f"❌ Ошибка: не хватает данных. Начните запись заново: /book")
             await state.clear()
             return
     
@@ -329,14 +323,12 @@ async def process_phone(message: Message, state: FSMContext):
         await state.clear()
         return
     
-    # Обновляем телефон клиента
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('UPDATE clients SET phone = ? WHERE telegram_id = ?', 
                       (phone, message.from_user.id))
         conn.commit()
     
-    # Создаём запись
     try:
         booking_id = add_booking(
             client_id=client['client_id'],
@@ -364,7 +356,6 @@ async def process_phone(message: Message, state: FSMContext):
         
     except Exception as e:
         logger.error(f"Ошибка при создании записи: {e}")
-        logger.error(traceback.format_exc())
         await message.answer("❌ Ошибка при создании записи. Попробуйте позже.")
     
     await state.clear()
@@ -372,7 +363,6 @@ async def process_phone(message: Message, state: FSMContext):
 @router.message(Command("mybookings"))
 @router.message(F.text == "📋 Мои записи")
 async def cmd_my_bookings(message: Message):
-    """Показать записи клиента"""
     bookings = get_client_bookings(message.from_user.id)
     
     if not bookings:
@@ -401,7 +391,6 @@ async def cmd_my_bookings(message: Message):
 
 @router.callback_query(F.data.startswith("cancel_booking_"))
 async def cancel_booking_callback(callback: CallbackQuery):
-    """Отмена записи"""
     try:
         parts = callback.data.split("_")
         if len(parts) < 3:
@@ -429,7 +418,6 @@ async def cancel_booking_callback(callback: CallbackQuery):
 
 @router.message(Command("remindme"))
 async def cmd_remind_me(message: Message):
-    """Напоминания на завтра"""
     tomorrow_str = get_tomorrow_str()
     
     bookings = get_client_bookings(message.from_user.id)
@@ -485,11 +473,8 @@ async def cmd_contacts(message: Message):
     """
     await message.answer(text, parse_mode="Markdown")
 
-# ============ КНОПКИ "НАЗАД" И "ОТМЕНА" ============
-
 @router.callback_query(F.data == "cancel")
 async def cancel_callback(callback: CallbackQuery, state: FSMContext):
-    """Отмена действия"""
     await state.clear()
     await callback.message.edit_text("❌ Действие отменено")
     await callback.message.answer("Возврат в главное меню", reply_markup=get_main_keyboard())
@@ -497,7 +482,6 @@ async def cancel_callback(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "back_to_services")
 async def back_to_services(callback: CallbackQuery, state: FSMContext):
-    """Назад к выбору услуг"""
     services = get_all_services()
     await callback.message.edit_text(
         "💇‍♀️ *Выберите услугу:*",
@@ -509,7 +493,6 @@ async def back_to_services(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "back_to_masters")
 async def back_to_masters(callback: CallbackQuery, state: FSMContext):
-    """Назад к выбору мастера"""
     data = await state.get_data()
     service_id = data.get('service_id')
     
