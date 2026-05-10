@@ -257,7 +257,12 @@ async def admin_booking_new_client_name(message: Message, state: FSMContext):
     data = await state.get_data()
     client_phone = data.get('client_phone')
     
-    # Создаём нового клиента
+    if not client_phone:
+        await message.answer("❌ Ошибка: номер телефона не найден. Начните заново.", reply_markup=get_admin_keyboard())
+        await state.clear()
+        return
+    
+    # Создаём нового клиента (telegram_id не указываем — будет NULL)
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('INSERT INTO clients (name, phone) VALUES (?, ?)', (name, client_phone))
