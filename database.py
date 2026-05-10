@@ -283,7 +283,12 @@ def cancel_booking(booking_id, client_id):
         return False
 
 def get_tomorrow_bookings():
-    tomorrow_str = get_tomorrow_str()
+    """Получает все записи на завтра для отправки напоминаний"""
+    from datetime import datetime, timedelta
+    from utils import get_izhevsk_now
+    
+    tomorrow = get_izhevsk_now().date() + timedelta(days=1)
+    tomorrow_str = tomorrow.strftime("%d.%m.%Y")
     
     with get_db_connection() as conn:
         cursor = conn.cursor()
