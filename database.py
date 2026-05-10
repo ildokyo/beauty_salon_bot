@@ -20,7 +20,7 @@ def init_db():
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS clients (
                 client_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                telegram_id INTEGER UNIQUE NOT NULL,
+                telegram_id INTEGER,
                 name TEXT NOT NULL,
                 phone TEXT,
                 registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
