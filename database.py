@@ -150,12 +150,13 @@ def get_all_services():
         return cursor.fetchall()
 
 def get_service(service_id):
+    """Получает услугу по ID и возвращает словарь"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM services WHERE service_id = ?', (service_id,))
         row = cursor.fetchone()
         if row:
-            return dict(row)
+            return dict(row)  # Преобразуем в словарь
         return None
 
 def get_all_masters(include_inactive=False):

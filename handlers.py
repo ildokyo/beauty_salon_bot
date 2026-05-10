@@ -150,11 +150,17 @@ async def process_service_selection(callback: CallbackQuery, state: FSMContext):
             await callback.answer("Услуга не найдена")
             return
         
-        category = service.get('category', 'hair')
+        # Преобразуем в словарь для удобства
+        if isinstance(service, dict):
+            service_dict = service
+        else:
+            service_dict = dict(service)
+        
+        category = service_dict.get('category', 'hair')
         
         await state.update_data(
             service_id=service_id, 
-            service_name=service['name'], 
+            service_name=service_dict['name'], 
             service_category=category
         )
         
@@ -162,23 +168,22 @@ async def process_service_selection(callback: CallbackQuery, state: FSMContext):
         
         if not masters:
             await callback.message.edit_text(
-                f"😔 К сожалению, нет мастеров для услуги {service['name']}",
+                f"😔 К сожалению, нет мастеров для услуги {service_dict['name']}",
                 reply_markup=None
             )
             await callback.answer()
             return
         
         await callback.message.edit_text(
-            f"✅ Выбрана услуга: *{service['name']}*\n"
-            f"💰 Цена: {service['price']}₽\n"
-            f"⏱ Длительность: ~{service['duration_min']} мин\n\n"
+            f"✅ Выбрана услуга: *{service_dict['name']}*\n"
+            f"💰 Цена: {service_dict['price']}₽\n"
+            f"⏱ Длительность: ~{service_dict['duration_min']} мин\n\n"
             f"👨‍🎨 *Выберите мастера:*",
             reply_markup=get_masters_inline_keyboard(masters),
             parse_mode="Markdown"
         )
         await state.set_state(BookingStates.waiting_for_master)
-        await callback.answer(f"✅ Выбрана услуга: {service['name']}")
-        logger.info(f"Пользователь выбрал услугу: {service['name']}")
+        await callback.answer(f"✅ Выбрана услуга: {service_dict['name']}")
         
     except Exception as e:
         logger.error(f"Ошибка в process_service_selection: {e}")
