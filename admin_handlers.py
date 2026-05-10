@@ -719,7 +719,7 @@ async def process_restore_master(message: Message, state: FSMContext):
         await message.answer("❌ Введите ID мастера (число)", reply_markup=get_cancel_keyboard())
 
 @router.message(F.text == "📋 Список мастеров")
-async def cmd_list_masters(message: Message):
+async def cmd_list_masters_admin(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer("⛔ Доступно только администраторам")
         return
@@ -732,10 +732,16 @@ async def cmd_list_masters(message: Message):
     
     text = "👨‍🎨 *Список всех мастеров:*\n\n"
     for master in masters:
-        status = "✅ Активен" if master['is_active'] == 1 else "❌ Скрыт"
-        exp = master.get('experience', 'не указан')
-        text += f"ID: {master['master_id']} — {master['name']}\n"
-        text += f"   Специализация: {master['specialization']}\n"
+        # Преобразуем в словарь
+        if hasattr(master, 'keys'):
+            master_dict = {key: master[key] for key in master.keys()}
+        else:
+            master_dict = dict(master)
+        
+        status = "✅ Активен" if master_dict.get('is_active') == 1 else "❌ Скрыт"
+        exp = master_dict.get('experience', 'не указан')
+        text += f"ID: {master_dict.get('master_id')} — {master_dict.get('name')}\n"
+        text += f"   Специализация: {master_dict.get('specialization')}\n"
         text += f"   Опыт: {exp}\n"
         text += f"   Статус: {status}\n\n"
     

@@ -106,7 +106,6 @@ async def cmd_services(message: Message):
 @router.message(Command("masters"))
 @router.message(F.text == "👨‍🎨 Мастера")
 async def cmd_masters(message: Message):
-    # Используем get_all_masters вместо get_active_masters
     masters = get_all_masters(include_inactive=False)
     
     if not masters:
@@ -115,9 +114,18 @@ async def cmd_masters(message: Message):
     
     text = "👨‍🎨 *Наши мастера:*\n\n"
     for master in masters:
-        experience = master.get('experience', 'не указан') if isinstance(master, dict) else master['experience'] if 'experience' in master.keys() else 'не указан'
-        text += f"✨ *{master['name']}*\n"
-        text += f"   Специализация: {master['specialization']}\n"
+        # Преобразуем Row в словарь, если нужно
+        if hasattr(master, 'keys'):
+            master_dict = {key: master[key] for key in master.keys()}
+        else:
+            master_dict = dict(master)
+        
+        name = master_dict.get('name', 'Неизвестно')
+        specialization = master_dict.get('specialization', 'не указана')
+        experience = master_dict.get('experience', 'не указан')
+        
+        text += f"✨ *{name}*\n"
+        text += f"   Специализация: {specialization}\n"
         text += f"   📆 Опыт: {experience}\n\n"
     
     await message.answer(text, parse_mode="Markdown")
@@ -200,18 +208,23 @@ async def process_master_selection(callback: CallbackQuery, state: FSMContext):
             await callback.answer("Мастер не найден")
             return
         
-        await state.update_data(master_id=master_id, master_name=master['name'])
+        # Преобразуем в словарь
+        if hasattr(master, 'keys'):
+            master_dict = {key: master[key] for key in master.keys()}
+        else:
+            master_dict = dict(master)
+        
+        await state.update_data(master_id=master_id, master_name=master_dict['name'])
         
         await callback.message.edit_text(
-            f"✅ Выбран мастер: *{master['name']}*\n\n"
+            f"✅ Выбран мастер: *{master_dict['name']}*\n\n"
             f"📅 *Введите желаемую дату в формате ДД.ММ.ГГГГ*\n"
             f"Например: 25.05.2026\n\n"
             f"Доступны даты от сегодня до +14 дней",
             parse_mode="Markdown"
         )
         await state.set_state(BookingStates.waiting_for_date)
-        await callback.answer(f"✅ Выбран мастер: {master['name']}")
-        logger.info(f"Пользователь выбрал мастера: {master['name']}")
+        await callback.answer(f"✅ Выбран мастер: {master_dict['name']}")
         
     except Exception as e:
         logger.error(f"Ошибка в process_master_selection: {e}")
