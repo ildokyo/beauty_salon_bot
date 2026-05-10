@@ -6,7 +6,6 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from bot import bot
 
 from database import *
 from keyboards import *
@@ -383,7 +382,6 @@ async def process_phone(message: Message, state: FSMContext):
                           (client_name, phone, message.from_user.id))
             conn.commit()
     
-    # Получаем реальную длительность услуги
     service = get_service(data['service_id'])
     if not service:
         await message.answer("❌ Услуга не найдена")
@@ -434,11 +432,11 @@ async def process_phone(message: Message, state: FSMContext):
         
         # ============ УВЕДОМЛЕНИЕ ВСЕМ АДМИНИСТРАТОРАМ ============
         admins = get_all_admins()
-        from bot import bot  # импортируем bot для отправки сообщений
         
         for admin in admins:
             try:
-                await bot.send_message(
+                # Используем message.bot вместо импорта bot
+                await message.bot.send_message(
                     chat_id=admin['telegram_id'],
                     text=f"📢 *Новая запись!*\n\n"
                          f"👤 Клиент: {client_name}\n"
@@ -461,7 +459,7 @@ async def process_phone(message: Message, state: FSMContext):
         await message.answer("❌ Ошибка при создании записи. Попробуйте позже.")
     
     await state.clear()
-
+    
 @router.message(Command("mybookings"))
 @router.message(F.text == "📋 Мои записи")
 async def cmd_my_bookings(message: Message):
