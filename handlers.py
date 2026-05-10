@@ -6,6 +6,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from bot import bot
 
 from database import *
 from keyboards import *
@@ -348,6 +349,7 @@ async def process_date(message: Message, state: FSMContext):
 
 @router.message(BookingStates.waiting_for_phone)
 async def process_phone(message: Message, state: FSMContext):
+    """Обработка ввода телефона и создание записи с уведомлением админов"""
     if message.text == "❌ Отмена":
         await state.clear()
         await message.answer("❌ Запись отменена", reply_markup=get_main_keyboard())
@@ -381,6 +383,7 @@ async def process_phone(message: Message, state: FSMContext):
                           (client_name, phone, message.from_user.id))
             conn.commit()
     
+    # Получаем реальную длительность услуги
     service = get_service(data['service_id'])
     if not service:
         await message.answer("❌ Услуга не найдена")
@@ -388,6 +391,10 @@ async def process_phone(message: Message, state: FSMContext):
         return
     
     duration_min = service['duration_min']
+    master_name = data.get('master_name', 'Не указан')
+    service_name = data.get('service_name', 'Не указана')
+    booking_date = data['booking_date']
+    booking_time = data['booking_time']
     
     try:
         booking_id = add_booking_with_duration(
@@ -395,8 +402,8 @@ async def process_phone(message: Message, state: FSMContext):
             master_id=data['master_id'],
             service_id=data['service_id'],
             schedule_id=data['schedule_id'],
-            date=data['booking_date'],
-            time=data['booking_time'],
+            date=booking_date,
+            time=booking_time,
             duration_min=duration_min
         )
         
@@ -409,13 +416,14 @@ async def process_phone(message: Message, state: FSMContext):
             await state.clear()
             return
         
+        # Отправляем подтверждение клиенту
         await message.answer(
             f"✅ *Запись успешно создана!*\n\n"
             f"👤 Имя: {client_name}\n"
-            f"💇‍♀️ Услуга: {data.get('service_name', 'Не указана')}\n"
-            f"👨‍🎨 Мастер: {data.get('master_name', 'Не указан')}\n"
-            f"📅 Дата: {data['booking_date']}\n"
-            f"⏰ Время: {data['booking_time']}\n"
+            f"💇‍♀️ Услуга: {service_name}\n"
+            f"👨‍🎨 Мастер: {master_name}\n"
+            f"📅 Дата: {booking_date}\n"
+            f"⏰ Время: {booking_time}\n"
             f"⏱ Длительность: ~{duration_min} мин\n"
             f"📞 Телефон: {phone}\n\n"
             f"✨ Я напомню о записи за день до визита.\n"
@@ -423,6 +431,28 @@ async def process_phone(message: Message, state: FSMContext):
             parse_mode="Markdown",
             reply_markup=get_main_keyboard()
         )
+        
+        # ============ УВЕДОМЛЕНИЕ ВСЕМ АДМИНИСТРАТОРАМ ============
+        admins = get_all_admins()
+        from bot import bot  # импортируем bot для отправки сообщений
+        
+        for admin in admins:
+            try:
+                await bot.send_message(
+                    chat_id=admin['telegram_id'],
+                    text=f"📢 *Новая запись!*\n\n"
+                         f"👤 Клиент: {client_name}\n"
+                         f"📞 Телефон: {phone}\n"
+                         f"💇‍♀️ Услуга: {service_name}\n"
+                         f"👨‍🎨 Мастер: {master_name}\n"
+                         f"📅 Дата: {booking_date}\n"
+                         f"⏰ Время: {booking_time}\n"
+                         f"⏱ Длительность: ~{duration_min} мин",
+                    parse_mode="Markdown"
+                )
+                logger.info(f"Уведомление отправлено админу {admin['telegram_id']}")
+            except Exception as e:
+                logger.error(f"Не удалось отправить уведомление админу {admin['telegram_id']}: {e}")
         
         logger.info(f"Создана запись #{booking_id} для клиента {message.from_user.id} ({client_name}), длительность {duration_min} мин")
         

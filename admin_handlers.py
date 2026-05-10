@@ -413,6 +413,10 @@ async def admin_booking_time(callback: CallbackQuery, state: FSMContext):
     
     data = await state.get_data()
     
+    # Получаем длительность услуги
+    service = get_service(data['service_id'])
+    duration_min = service['duration_min'] if service else 60
+    
     # Создаём запись
     booking_id = add_booking_with_duration(
         client_id=data['client_id'],
@@ -421,10 +425,34 @@ async def admin_booking_time(callback: CallbackQuery, state: FSMContext):
         schedule_id=schedule_id,
         date=data['booking_date'],
         time=slot['time_start'],
-        duration_min=60  # будет заменено на реальную длительность в add_booking_with_duration
+        duration_min=duration_min
     )
     
     client_name = data.get('client_name', 'Клиент')
+    
+    # Получаем Telegram ID клиента (если есть)
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT telegram_id FROM clients WHERE client_id = ?', (data['client_id'],))
+        client = cursor.fetchone()
+    
+    # Отправляем уведомление клиенту, если у него есть Telegram
+    if client and client['telegram_id'] and client['telegram_id'] != 0:
+        try:
+            await callback.bot.send_message(
+                chat_id=client['telegram_id'],
+                text=f"📢 *Вас записали в салон красоты!*\n\n"
+                     f"👤 Клиент: {client_name}\n"
+                     f"💇‍♀️ Услуга: {data['service_name']}\n"
+                     f"👨‍🎨 Мастер: {data['master_name']}\n"
+                     f"📅 Дата: {data['booking_date']}\n"
+                     f"⏰ Время: {slot['time_start']}\n"
+                     f"⏱ Длительность: ~{duration_min} мин\n\n"
+                     f"✨ Ждём вас в салоне «Бабочка»!",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.error(f"Не удалось отправить уведомление клиенту {client['telegram_id']}: {e}")
     
     await callback.message.delete()
     await callback.message.answer(
@@ -433,8 +461,9 @@ async def admin_booking_time(callback: CallbackQuery, state: FSMContext):
         f"💇‍♀️ Услуга: {data['service_name']}\n"
         f"👨‍🎨 Мастер: {data['master_name']}\n"
         f"📅 Дата: {data['booking_date']}\n"
-        f"⏰ Время: {slot['time_start']}\n\n"
-        f"Клиент уведомлён о записи (если есть Telegram).",
+        f"⏰ Время: {slot['time_start']}\n"
+        f"⏱ Длительность: ~{duration_min} мин\n\n"
+        f"{'✅ Клиент уведомлен' if client and client['telegram_id'] else '⚠️ У клиента нет Telegram, уведомление не отправлено'}",
         reply_markup=get_admin_keyboard(),
         parse_mode="Markdown"
     )
