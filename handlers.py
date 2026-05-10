@@ -106,7 +106,8 @@ async def cmd_services(message: Message):
 @router.message(Command("masters"))
 @router.message(F.text == "👨‍🎨 Мастера")
 async def cmd_masters(message: Message):
-    masters = get_active_masters()
+    # Используем get_all_masters вместо get_active_masters
+    masters = get_all_masters(include_inactive=False)
     
     if not masters:
         await message.answer("😔 Мастера временно не добавлены")
@@ -114,7 +115,7 @@ async def cmd_masters(message: Message):
     
     text = "👨‍🎨 *Наши мастера:*\n\n"
     for master in masters:
-        experience = master.get('experience', 'не указан')
+        experience = master.get('experience', 'не указан') if isinstance(master, dict) else master['experience'] if 'experience' in master.keys() else 'не указан'
         text += f"✨ *{master['name']}*\n"
         text += f"   Специализация: {master['specialization']}\n"
         text += f"   📆 Опыт: {experience}\n\n"

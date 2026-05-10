@@ -159,6 +159,24 @@ def get_service(service_id):
             return dict(row)  # Преобразуем в словарь
         return None
 
+def get_master(master_id):
+    """Получает мастера по ID и возвращает словарь"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM masters WHERE master_id = ?', (master_id,))
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+        return None
+
+def get_masters_by_category(category):
+    """Получает мастеров по категории и возвращает список словарей"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM masters WHERE service_category = ? AND is_active = 1', (category,))
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+
 def get_all_masters(include_inactive=False):
     with get_db_connection() as conn:
         cursor = conn.cursor()
@@ -172,18 +190,6 @@ def get_active_masters():
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM masters WHERE is_active = 1 ORDER BY master_id')
-        return cursor.fetchall()
-
-def get_master(master_id):
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM masters WHERE master_id = ?', (master_id,))
-        return cursor.fetchone()
-
-def get_masters_by_category(category):
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM masters WHERE service_category = ? AND is_active = 1', (category,))
         return cursor.fetchall()
 
 def get_free_slots(master_id, date_str):

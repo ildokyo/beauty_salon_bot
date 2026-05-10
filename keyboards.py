@@ -10,12 +10,11 @@ def get_main_keyboard():
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
 def get_admin_keyboard():
-    """Клавиатура для администратора"""
     kb = [
         [KeyboardButton(text="👨‍🎨 Управление мастерами")],
         [KeyboardButton(text="💇‍♀️ Управление услугами")],
-        [KeyboardButton(text="📅 Добавить расписание"), KeyboardButton(text="📋 Все записи")],
-        [KeyboardButton(text="👥 Управление админами")],
+        [KeyboardButton(text="📅 Добавить расписание"), KeyboardButton(text="📅 Сгенерировать расписание")],
+        [KeyboardButton(text="📋 Все записи"), KeyboardButton(text="👥 Управление админами")],
         [KeyboardButton(text="📢 Рассылка"), KeyboardButton(text="📝 Записать клиента")],
         [KeyboardButton(text="🚪 Выйти из админки"), KeyboardButton(text="◀️ Клиентское меню")]
     ]
