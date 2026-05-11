@@ -1390,3 +1390,19 @@ async def generate_schedule_end_time(message: Message, state: FSMContext):
         
     except ValueError:
         await message.answer("❌ Неверный формат времени. Используйте ЧЧ:ММ", reply_markup=get_cancel_keyboard())
+    
+@router.message(Command("test_remind"))
+async def test_remind(message: Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только для админов")
+        return
+    
+    await message.answer("🔄 Проверяю записи на завтра...")
+    
+    # Импортируем функцию
+    from scheduler import send_daily_reminders
+    
+    # Запускаем проверку
+    await send_daily_reminders()
+    
+    await message.answer("✅ Тест завершён. Смотри логи на Bothost.")
