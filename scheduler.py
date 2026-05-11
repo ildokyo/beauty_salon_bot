@@ -58,13 +58,13 @@ def setup_scheduler():
         
         scheduler.add_job(
             send_daily_reminders,
-            trigger=CronTrigger(hour=14, minute=10),
+            trigger=CronTrigger(hour=19, minute=00),
             id="daily_reminders",
             replace_existing=True
         )
         
         scheduler.start()
-        logger.info("🕐 Планировщик запущен. Напоминания в 14:10")
+        logger.info("🕐 Планировщик запущен. Напоминания в 19:00")
         return scheduler
     except Exception as e:
         logger.error(f"❌ Ошибка запуска планировщика: {e}")

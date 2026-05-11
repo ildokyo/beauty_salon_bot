@@ -1016,6 +1016,7 @@ async def cmd_all_bookings(message: Message):
     
     if text:
         await message.answer(text, parse_mode="Markdown")
+
 # ============ ДОБАВЛЕНИЕ РАСПИСАНИЯ ============
 
 class GenerateScheduleStates(StatesGroup):
