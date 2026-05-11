@@ -154,9 +154,7 @@ def get_service(service_id):
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM services WHERE service_id = ?', (service_id,))
         row = cursor.fetchone()
-        if row:
-            return dict(row) 
-        return None
+        return dict(row) if row else None
 
 def get_master(master_id):
     with get_db_connection() as conn:
@@ -202,6 +200,7 @@ def get_free_slots(master_id, date_str):
         return slots
 
 def add_booking_with_duration(client_id, master_id, service_id, schedule_id, date, time, duration_min):
+    # Создаёт запись с блокировкой нескольких слотов под длительную услугу
     with get_db_connection() as conn:
         cursor = conn.cursor()
         
@@ -209,6 +208,7 @@ def add_booking_with_duration(client_id, master_id, service_id, schedule_id, dat
         slot = cursor.fetchone()
         
         if not slot:
+            logger.error(f"Слот {schedule_id} не найден")
             return None
         
         slots_to_block = math.ceil(duration_min / 30)
@@ -222,24 +222,29 @@ def add_booking_with_duration(client_id, master_id, service_id, schedule_id, dat
         ''', (master_id, date, slot['time_start'], slots_to_block))
         
         slots = cursor.fetchall()
-        
+
         if len(slots) < slots_to_block:
+            logger.warning(f"Недостаточно свободных слотов для услуги длительностью {duration_min} мин. Нужно: {slots_to_block}, доступно: {len(slots)}")
             return None
+        
+        cursor.execute('''
+            INSERT INTO bookings (client_id, master_id, service_id, schedule_id, booking_date, booking_time, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (client_id, master_id, service_id, schedule_id, date, time, 'confirmed'))
+        
+        booking_id = cursor.lastrowid
         
         for s in slots:
             cursor.execute('''
                 UPDATE master_schedule 
                 SET is_booked = 1, booking_id = ?
                 WHERE schedule_id = ?
-            ''', (cursor.lastrowid, s['schedule_id']))
-        
-        cursor.execute('''
-            INSERT INTO bookings (client_id, master_id, service_id, schedule_id, booking_date, booking_time)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (client_id, master_id, service_id, schedule_id, date, time))
+            ''', (booking_id, s['schedule_id']))
         
         conn.commit()
-        return cursor.lastrowid
+        logger.info(f"Создана запись #{booking_id}: клиент {client_id}, мастер {master_id}, услуга {service_id}, заблокировано {len(slots)} слотов")
+        
+        return booking_id
 
 def get_client_bookings(telegram_id):
     with get_db_connection() as conn:

@@ -1,6 +1,6 @@
 import logging
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
@@ -400,22 +400,91 @@ async def admin_booking_date(message: Message, state: FSMContext):
 async def admin_booking_time(callback: CallbackQuery, state: FSMContext):
     schedule_id = int(callback.data.split("_")[1])
     
+    # ПРОВЕРКА: Слот существует и свободен
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute('SELECT time_start, time_end FROM master_schedule WHERE schedule_id = ?', (schedule_id,))
+        cursor.execute('''
+            SELECT schedule_id, time_start, time_end, is_booked 
+            FROM master_schedule 
+            WHERE schedule_id = ?
+        ''', (schedule_id,))
         slot = cursor.fetchone()
     
     if not slot:
-        await callback.answer("❌ Слот не найден", show_alert=True)
+        await callback.answer("❌ Окошко не найдено", show_alert=True)
+        await state.clear()
+        return
+    
+    if slot['is_booked'] == 1:
+        await callback.answer("❌ Это время уже занято! Выберите другое окошечко", show_alert=True)
+        data = await state.get_data()
+        free_slots = get_free_slots(data['master_id'], data['booking_date'])
+        if free_slots:
+            await callback.message.edit_text(
+                f"📅 Дата: {data['booking_date']}\n\n"
+                f"⏰ *Обновленный список свободного времени:*",
+                reply_markup=get_slots_inline_keyboard(free_slots),
+                parse_mode="Markdown"
+            )
+        else:
+            await callback.message.edit_text(
+                f"😔 На {data['booking_date']} больше нет свободных окошек у мастера {data['master_name']}.\n\n"
+                f"Выберите другую дату через /admin",
+                reply_markup=get_admin_keyboard()
+            )
+            await state.clear()
         return
     
     data = await state.get_data()
     
-    # Получаем длительность услуги
+    # ПРОВЕРКА: Все необходимые данные есть
+    required_fields = ['client_id', 'master_id', 'service_id', 'booking_date', 'client_name', 'service_name', 'master_name']
+    missing_fields = [f for f in required_fields if f not in data]
+    if missing_fields:
+        await callback.answer("❌ Ошибка: не хватает данных. Начните заново", show_alert=True)
+        await state.clear()
+        return
+
     service = get_service(data['service_id'])
-    duration_min = service['duration_min'] if service else 60
+    if not service:
+        await callback.answer("❌ Услуга не найдена", show_alert=True)
+        await state.clear()
+        return
     
-    # Создаём запись
+    duration_min = service['duration_min']
+
+    processing_msg = await callback.message.answer("⏳ Создаю запись...")
+    
+    # ПРОВЕРКА: Проверяем, что все слоты для услуги свободны
+    slots_to_block = math.ceil(duration_min / 30)
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT COUNT(*) as count
+            FROM master_schedule 
+            WHERE master_id = ? AND work_date = ? AND time_start >= ? AND is_booked = 0
+            LIMIT ?
+        ''', (data['master_id'], data['booking_date'], slot['time_start'], slots_to_block))
+        available_slots = cursor.fetchone()
+        
+        if available_slots['count'] < slots_to_block:
+            await processing_msg.delete()
+            await callback.answer(
+                f"❌ Недостаточно свободного времени для услуги ({duration_min} мин). "
+                f"Выберите другое время или дату",
+                show_alert=True
+            )
+            free_slots = get_free_slots(data['master_id'], data['booking_date'])
+            if free_slots:
+                await callback.message.edit_text(
+                    f"📅 Дата: {data['booking_date']}\n\n"
+                    f"⏰ *Выберите время:*",
+                    reply_markup=get_slots_inline_keyboard(free_slots),
+                    parse_mode="Markdown"
+                )
+            return
+    
+    # СОЗДАЁМ ЗАПИСЬ (с проверкой результата)
     booking_id = add_booking_with_duration(
         client_id=data['client_id'],
         master_id=data['master_id'],
@@ -426,47 +495,80 @@ async def admin_booking_time(callback: CallbackQuery, state: FSMContext):
         duration_min=duration_min
     )
     
-    client_name = data.get('client_name', 'Клиент')
+    await processing_msg.delete()
     
-    # Получаем Telegram ID клиента (если есть)
+    # ПРОВЕРКА: Успешно ли создалась запись
+    if not booking_id:
+        await callback.answer(
+            "❌ Не удалось создать запись. Возможно, выбранное время уже занято. "
+            "Пожалуйста, попробуйте снова",
+            show_alert=True
+        )
+        free_slots = get_free_slots(data['master_id'], data['booking_date'])
+        if free_slots:
+            await callback.message.edit_text(
+                f"📅 Дата: {data['booking_date']}\n\n"
+                f"⏰ *Выберите время:*",
+                reply_markup=get_slots_inline_keyboard(free_slots),
+                parse_mode="Markdown"
+            )
+        else:
+            await callback.message.edit_text(
+                f"😔 На {data['booking_date']} нет свободных окошек",
+                reply_markup=get_admin_keyboard()
+            )
+            await state.clear()
+        return
+    
+    client_name = data.get('client_name', 'Клиент')
+
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute('SELECT telegram_id FROM clients WHERE client_id = ?', (data['client_id'],))
+        cursor.execute('SELECT telegram_id, name, phone FROM clients WHERE client_id = ?', (data['client_id'],))
         client = cursor.fetchone()
-    
-    # Отправляем уведомление клиенту, если у него есть Telegram
+
+    notification_sent = False
     if client and client['telegram_id'] and client['telegram_id'] != 0:
         try:
             await callback.bot.send_message(
                 chat_id=client['telegram_id'],
                 text=f"📢 *Вас записали в салон красоты!*\n\n"
-                     f"👤 Клиент: {client_name}\n"
+                     f"👤 Имя: {client_name}\n"
                      f"💇‍♀️ Услуга: {data['service_name']}\n"
                      f"👨‍🎨 Мастер: {data['master_name']}\n"
                      f"📅 Дата: {data['booking_date']}\n"
                      f"⏰ Время: {slot['time_start']}\n"
                      f"⏱ Длительность: ~{duration_min} мин\n\n"
+                     f"📍 Адрес: г. Ижевск, ул. Пушкинская, 123\n"
+                     f"📞 Телефон: +7 (912) 123-45-67\n\n"
                      f"✨ Ждём вас в салоне «Бабочка»!",
                 parse_mode="Markdown"
             )
+            notification_sent = True
+            logger.info(f"Уведомление отправлено клиенту {client['telegram_id']}")
         except Exception as e:
             logger.error(f"Не удалось отправить уведомление клиенту {client['telegram_id']}: {e}")
-    
+
     await callback.message.delete()
+
     await callback.message.answer(
-        f"✅ *Запись создана администратором!*\n\n"
+        f"✅ *Запись #{booking_id} успешно создана администратором!*\n\n"
         f"👤 Клиент: {client_name}\n"
+        f"📞 Телефон: {client['phone'] if client else 'не указан'}\n"
         f"💇‍♀️ Услуга: {data['service_name']}\n"
         f"👨‍🎨 Мастер: {data['master_name']}\n"
         f"📅 Дата: {data['booking_date']}\n"
         f"⏰ Время: {slot['time_start']}\n"
         f"⏱ Длительность: ~{duration_min} мин\n\n"
-        f"{'✅ Клиент уведомлен' if client and client['telegram_id'] else '⚠️ У клиента нет Telegram, уведомление не отправлено'}",
+        f"{'✅ Клиент уведомлен' if notification_sent else '⚠️ У клиента нет Telegram, уведомление не отправлено'}",
         reply_markup=get_admin_keyboard(),
         parse_mode="Markdown"
     )
+
+    logger.info(f"Админ {callback.from_user.id} создал запись #{booking_id} для клиента {data['client_id']}")
+    
     await state.clear()
-    await callback.answer()
+    await callback.answer("✅ Запись успешно создана!")
 
 # ============ УПРАВЛЕНИЕ АДМИНИСТРАТОРАМИ ============
 
