@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 bot = Bot(token=BOT_TOKEN)
 
 async def send_daily_reminders():
-    """Отправляет напоминания о записях на завтра"""
+    # Отправляет напоминания о записях на завтра
     logger.info("🕐 Проверяю записи на завтра...")
     
     bookings = get_tomorrow_bookings()
@@ -50,8 +50,9 @@ async def send_daily_reminders():
     
     logger.info(f"📨 Отправлено {success_count} из {len(bookings)} напоминаний")
 
+
 def setup_scheduler():
-    """Настраивает и запускает планировщик задач"""
+    # Настраивает и запускает планировщик задач
     try:
         scheduler = AsyncIOScheduler(timezone="Europe/Samara")
         

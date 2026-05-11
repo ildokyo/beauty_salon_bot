@@ -27,7 +27,7 @@ def init_db():
             )
         ''')
         
-        # Таблица мастеров (с опытом)
+        # Таблица мастеров
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS masters (
                 master_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -150,17 +150,15 @@ def get_all_services():
         return cursor.fetchall()
 
 def get_service(service_id):
-    """Получает услугу по ID и возвращает словарь"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM services WHERE service_id = ?', (service_id,))
         row = cursor.fetchone()
         if row:
-            return dict(row)  # Преобразуем в словарь
+            return dict(row) 
         return None
 
 def get_master(master_id):
-    """Получает мастера по ID и возвращает словарь"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM masters WHERE master_id = ?', (master_id,))
@@ -170,7 +168,6 @@ def get_master(master_id):
         return None
 
 def get_masters_by_category(category):
-    """Получает мастеров по категории и возвращает список словарей"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM masters WHERE service_category = ? AND is_active = 1', (category,))
@@ -283,7 +280,7 @@ def cancel_booking(booking_id, client_id):
         return False
 
 def get_tomorrow_bookings():
-    """Получает все записи на завтра для отправки напоминаний"""
+    # Получает все записи на завтра для отправки напоминаний
     from datetime import datetime, timedelta
     from utils import get_izhevsk_now
     

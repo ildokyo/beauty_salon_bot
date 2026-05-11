@@ -2,12 +2,12 @@ import pytz
 from datetime import datetime, timedelta
 
 def get_izhevsk_now():
-    """Возвращает текущее время в Ижевске (UTC+4)"""
+    #Возвращает текущее время в Ижевске (UTC+4)
     tz = pytz.timezone('Europe/Samara')
     return datetime.now(tz)
 
 def format_date(date_str):
-    """Приводит дату к формату ДД.ММ.ГГГГ"""
+    #Приводит дату к формату ДД.ММ.ГГГГ
     try:
         if '-' in date_str:
             date_obj = datetime.strptime(date_str, "%Y-%m-%d")
@@ -18,7 +18,7 @@ def format_date(date_str):
         return date_str
 
 def parse_date(date_str):
-    """Преобразует ДД.ММ.ГГГГ в объект datetime"""
+    #Преобразует ДД.ММ.ГГГГ в объект datetime
     try:
         if '-' in date_str:
             return datetime.strptime(date_str, "%Y-%m-%d").date()
@@ -27,6 +27,6 @@ def parse_date(date_str):
         return None
 
 def get_tomorrow_str():
-    """Возвращает завтрашнюю дату в формате ДД.ММ.ГГГГ"""
+    #Возвращает завтрашнюю дату в формате ДД.ММ.ГГГГ
     tomorrow = get_izhevsk_now().date() + timedelta(days=1)
     return tomorrow.strftime("%d.%m.%Y")

@@ -1,7 +1,6 @@
 from database import get_db_connection
 from datetime import datetime, timedelta
 
-# Завтрашняя дата в формате ДД.ММ.ГГГГ
 tomorrow = (datetime.now() + timedelta(days=1)).strftime("%d.%m.%Y")
 print(f"Завтра: {tomorrow}")
 

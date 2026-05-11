@@ -1,3 +1,4 @@
+# Не отправляется на github
 venv/
 __pycache__/
 *.pyc

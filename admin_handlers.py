@@ -262,7 +262,7 @@ async def admin_booking_new_client_name(message: Message, state: FSMContext):
         await state.clear()
         return
     
-    # Создаём нового клиента (telegram_id не указываем — будет NULL)
+    # Создаём нового клиента
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('INSERT INTO clients (name, phone) VALUES (?, ?)', (name, client_phone))
@@ -295,7 +295,6 @@ async def admin_booking_service(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Услуга не найдена")
         return
     
-    # Преобразуем в словарь
     if hasattr(service, 'keys'):
         service_dict = {key: service[key] for key in service.keys()}
     else:
@@ -335,7 +334,6 @@ async def admin_booking_master(callback: CallbackQuery, state: FSMContext):
     master_id = int(callback.data.split("_")[1])
     master = get_master(master_id)
     
-    # Преобразуем в словарь
     if hasattr(master, 'keys'):
         master_dict = {key: master[key] for key in master.keys()}
     else:
@@ -766,7 +764,6 @@ async def cmd_list_masters_admin(message: Message):
     
     text = "👨‍🎨 *Список всех мастеров:*\n\n"
     for master in masters:
-        # Преобразуем в словарь
         if hasattr(master, 'keys'):
             master_dict = {key: master[key] for key in master.keys()}
         else:
@@ -989,194 +986,6 @@ async def cmd_list_services_admin(message: Message):
     
     await message.answer(text, parse_mode="Markdown")
 
-# ============ ДОБАВЛЕНИЕ РАСПИСАНИЯ (АВТОМАТИЧЕСКАЯ ГЕНЕРАЦИЯ НА ПЕРИОД) ============
-
-class GenerateScheduleStates(StatesGroup):
-    waiting_for_master = State()
-    waiting_for_start_date = State()
-    waiting_for_end_date = State()
-    waiting_for_start_time = State()
-    waiting_for_end_time = State()
-
-@router.message(F.text == "📅 Добавить расписание")
-async def cmd_generate_schedule(message: Message, state: FSMContext):
-    """Автоматическая генерация расписания на период (не ручное добавление)"""
-    if not is_admin(message.from_user.id):
-        await message.answer("⛔ Доступно только администраторам")
-        return
-    
-    masters = get_all_masters(include_inactive=False)
-    
-    if not masters:
-        await message.answer("📭 Нет мастеров для добавления расписания")
-        return
-    
-    text = "👨‍🎨 *Автоматическая генерация расписания*\n\n"
-    text += "Выберите мастера (введите ID):\n\n"
-    for master in masters:
-        text += f"ID: {master['master_id']} — {master['name']} ({master['specialization']})\n"
-    
-    await message.answer(text, parse_mode="Markdown", reply_markup=get_cancel_keyboard())
-    await state.set_state(GenerateScheduleStates.waiting_for_master)
-
-@router.message(GenerateScheduleStates.waiting_for_master)
-async def generate_schedule_master(message: Message, state: FSMContext):
-    if message.text == "❌ Отмена":
-        await state.clear()
-        await message.answer("❌ Добавление расписания отменено", reply_markup=get_admin_keyboard())
-        return
-    
-    try:
-        master_id = int(message.text.strip())
-        master = get_master(master_id)
-        if not master:
-            await message.answer(f"❌ Мастер с ID {master_id} не найден", reply_markup=get_cancel_keyboard())
-            return
-        
-        await state.update_data(master_id=master_id, master_name=master['name'])
-        await message.answer(
-            "📅 *Шаг 2 из 4*\n\n"
-            "Введите **дату начала** в формате ДД.ММ.ГГГГ:\n"
-            "Например: 10.05.2026\n\n"
-            "С этой даты начнётся генерация расписания",
-            reply_markup=get_cancel_keyboard(),
-            parse_mode="Markdown"
-        )
-        await state.set_state(GenerateScheduleStates.waiting_for_start_date)
-    except ValueError:
-        await message.answer("❌ Введите ID мастера (число)", reply_markup=get_cancel_keyboard())
-
-@router.message(GenerateScheduleStates.waiting_for_start_date)
-async def generate_schedule_start_date(message: Message, state: FSMContext):
-    if message.text == "❌ Отмена":
-        await state.clear()
-        await message.answer("❌ Добавление расписания отменено", reply_markup=get_admin_keyboard())
-        return
-    
-    try:
-        start_date = datetime.strptime(message.text, "%d.%m.%Y")
-        await state.update_data(start_date=message.text)
-        await message.answer(
-            "📅 *Шаг 3 из 4*\n\n"
-            "Введите **дату окончания** в формате ДД.ММ.ГГГГ:\n"
-            "Например: 20.05.2026\n\n"
-            "⚠️ Расписание будет создано на ВСЕ дни в этом диапазоне (включая выходные)",
-            reply_markup=get_cancel_keyboard(),
-            parse_mode="Markdown"
-        )
-        await state.set_state(GenerateScheduleStates.waiting_for_end_date)
-    except ValueError:
-        await message.answer("❌ Неверный формат даты. Используйте ДД.ММ.ГГГГ", reply_markup=get_cancel_keyboard())
-
-@router.message(GenerateScheduleStates.waiting_for_end_date)
-async def generate_schedule_end_date(message: Message, state: FSMContext):
-    if message.text == "❌ Отмена":
-        await state.clear()
-        await message.answer("❌ Добавление расписания отменено", reply_markup=get_admin_keyboard())
-        return
-    
-    try:
-        end_date = datetime.strptime(message.text, "%d.%m.%Y")
-        data = await state.get_data()
-        start_date = datetime.strptime(data['start_date'], "%d.%m.%Y")
-        
-        if end_date < start_date:
-            await message.answer("❌ Дата окончания не может быть раньше даты начала", reply_markup=get_cancel_keyboard())
-            return
-        
-        await state.update_data(end_date=message.text)
-        await message.answer(
-            "⏰ *Шаг 4 из 4*\n\n"
-            "Введите **время начала** рабочего дня (ЧЧ:ММ):\n"
-            "Например: 10:00",
-            reply_markup=get_cancel_keyboard(),
-            parse_mode="Markdown"
-        )
-        await state.set_state(GenerateScheduleStates.waiting_for_start_time)
-    except ValueError:
-        await message.answer("❌ Неверный формат даты. Используйте ДД.ММ.ГГГГ", reply_markup=get_cancel_keyboard())
-
-@router.message(GenerateScheduleStates.waiting_for_start_time)
-async def generate_schedule_start_time(message: Message, state: FSMContext):
-    if message.text == "❌ Отмена":
-        await state.clear()
-        await message.answer("❌ Добавление расписания отменено", reply_markup=get_admin_keyboard())
-        return
-    
-    try:
-        datetime.strptime(message.text, "%H:%M")
-        await state.update_data(start_time=message.text)
-        await message.answer(
-            "⏰ *Шаг 4 из 4 (продолжение)*\n\n"
-            "Введите **время окончания** рабочего дня (ЧЧ:ММ):\n"
-            "Например: 18:00\n\n"
-            "✅ Слоты будут создаваться каждые 30 минут",
-            reply_markup=get_cancel_keyboard(),
-            parse_mode="Markdown"
-        )
-        await state.set_state(GenerateScheduleStates.waiting_for_end_time)
-    except ValueError:
-        await message.answer("❌ Неверный формат времени. Используйте ЧЧ:ММ", reply_markup=get_cancel_keyboard())
-
-@router.message(GenerateScheduleStates.waiting_for_end_time)
-async def generate_schedule_end_time(message: Message, state: FSMContext):
-    if message.text == "❌ Отмена":
-        await state.clear()
-        await message.answer("❌ Добавление расписания отменено", reply_markup=get_admin_keyboard())
-        return
-    
-    try:
-        end_time_obj = datetime.strptime(message.text, "%H:%M")
-        data = await state.get_data()
-        start_time_obj = datetime.strptime(data['start_time'], "%H:%M")
-        
-        if end_time_obj <= start_time_obj:
-            await message.answer("❌ Время окончания должно быть позже времени начала", reply_markup=get_cancel_keyboard())
-            return
-        
-        # Парсим даты
-        start_date = datetime.strptime(data['start_date'], "%d.%m.%Y")
-        end_date = datetime.strptime(data['end_date'], "%d.%m.%Y")
-        
-        total_slots = 0
-        days_count = 0
-        current_date = start_date
-        
-        # СОЗДАЁМ РАСПИСАНИЕ НА КАЖДЫЙ ДЕНЬ В ДИАПАЗОНЕ
-        await message.answer("🔄 Генерация расписания... Пожалуйста, подождите.")
-        
-        while current_date <= end_date:
-            date_str = current_date.strftime("%d.%m.%Y")
-            slots = add_work_slots(
-                data['master_id'],
-                date_str,
-                data['start_time'],
-                message.text
-            )
-            total_slots += slots
-            days_count += 1
-            current_date += timedelta(days=1)
-        
-        master = get_master(data['master_id'])
-        master_name = master['name'] if master else f"ID {data['master_id']}"
-        
-        await message.answer(
-            f"✅ *Расписание успешно сгенерировано!*\n\n"
-            f"👨‍🎨 Мастер: {master_name}\n"
-            f"📅 Период: {data['start_date']} — {data['end_date']}\n"
-            f"📆 Всего дней: {days_count}\n"
-            f"⏰ Время работы: {data['start_time']} - {message.text}\n"
-            f"⏱ Интервал: 30 минут\n"
-            f"📊 Всего создано слотов: {total_slots}\n\n"
-            f"✅ Включая выходные (субботу и воскресенье)",
-            reply_markup=get_admin_keyboard(),
-            parse_mode="Markdown"
-        )
-        await state.clear()
-        
-    except ValueError:
-        await message.answer("❌ Неверный формат времени. Используйте ЧЧ:ММ", reply_markup=get_cancel_keyboard())
-
 # ============ ПРОСМОТР ВСЕХ ЗАПИСЕЙ ============
 
 @router.message(F.text == "📋 Все записи")
@@ -1207,7 +1016,7 @@ async def cmd_all_bookings(message: Message):
     
     if text:
         await message.answer(text, parse_mode="Markdown")
-# ============ ДОБАВЛЕНИЕ РАСПИСАНИЯ (ГЕНЕРАЦИЯ НА ПЕРИОД) ============
+# ============ ДОБАВЛЕНИЕ РАСПИСАНИЯ ============
 
 class GenerateScheduleStates(StatesGroup):
     waiting_for_master = State()
@@ -1218,7 +1027,7 @@ class GenerateScheduleStates(StatesGroup):
 
 @router.message(F.text == "📅 Добавить расписание")
 async def cmd_generate_schedule(message: Message, state: FSMContext):
-    """Генерация расписания на период (вместо ручного добавления)"""
+    # Генерация расписания на период 
     if not is_admin(message.from_user.id):
         await message.answer("⛔ Доступно только администраторам")
         return

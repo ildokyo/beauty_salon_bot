@@ -33,9 +33,7 @@ async def cmd_start(message: Message):
     if not client:
         add_client(user.id, user.first_name)
     
-    # Проверяем, админ ли пользователь
     if is_admin(user.id):
-        # Для админов показываем меню с кнопкой "👑 Админ панель"
         kb = [
             [KeyboardButton(text="💇‍♀️ Услуги"), KeyboardButton(text="👨‍🎨 Мастера")],
             [KeyboardButton(text="📅 Записаться"), KeyboardButton(text="📋 Мои записи")],
@@ -51,9 +49,14 @@ async def cmd_start(message: Message):
             parse_mode="Markdown"
         )
     else:
-        # Обычное меню для клиентов
         await message.answer(
-            f"👋 Добро пожаловать в салон красоты «Бабочка», {user.first_name}!",
+            f"🦋 Здравствуйте, {user.first_name}! Рады приветствовать вас в салоне красоты «Бабочка».\n\n"
+            f"Я ваш виртуальный помощник. Вот что я умею:\n"
+            f"💇‍♀️ /services — посмотреть услуги и цены\n"
+            f"👨‍🎨 /masters — познакомиться с нашими мастерами\n"
+            f"📅 /book — записаться на процедуру\n"
+            f"📋 /mybookings — посмотреть свои записи\n\n"
+            f"Просто нажмите на нужную кнопку в меню ниже 👇",
             reply_markup=get_main_keyboard()
         )
 
@@ -114,7 +117,6 @@ async def cmd_masters(message: Message):
     
     text = "👨‍🎨 *Наши мастера:*\n\n"
     for master in masters:
-        # Преобразуем Row в словарь, если нужно
         if hasattr(master, 'keys'):
             master_dict = {key: master[key] for key in master.keys()}
         else:
@@ -159,7 +161,6 @@ async def process_service_selection(callback: CallbackQuery, state: FSMContext):
             await callback.answer("Услуга не найдена")
             return
         
-        # Преобразуем в словарь для удобства
         if isinstance(service, dict):
             service_dict = service
         else:
@@ -207,8 +208,7 @@ async def process_master_selection(callback: CallbackQuery, state: FSMContext):
         if not master:
             await callback.answer("Мастер не найден")
             return
-        
-        # Преобразуем в словарь
+
         if hasattr(master, 'keys'):
             master_dict = {key: master[key] for key in master.keys()}
         else:
@@ -246,7 +246,7 @@ async def process_slot_selection(callback: CallbackQuery, state: FSMContext):
             slot = cursor.fetchone()
         
         if not slot:
-            await callback.answer("❌ Слот не найден", show_alert=True)
+            await callback.answer("❌ Окошко не найдено", show_alert=True)
             return
         
         await state.update_data(schedule_id=schedule_id, booking_time=slot['time_start'])
@@ -264,7 +264,7 @@ async def process_slot_selection(callback: CallbackQuery, state: FSMContext):
         )
         await state.set_state(BookingStates.waiting_for_name)
         await callback.answer(f"✅ Выбрано время: {slot['time_start']}")
-        logger.info(f"Пользователь выбрал слот {schedule_id}, время {slot['time_start']}")
+        logger.info(f"Пользователь выбрал окошко {schedule_id}, время {slot['time_start']}")
         
     except Exception as e:
         logger.error(f"Ошибка в process_slot_selection: {e}")
@@ -325,7 +325,7 @@ async def process_date(message: Message, state: FSMContext):
     
     if not free_slots or len(free_slots) == 0:
         await message.answer(
-            f"😔 На {date_str} нет свободных слотов у мастера {master_name}.\n\n"
+            f"😔 На {date_str} нет свободных окошек у мастера {master_name}.\n\n"
             f"Пожалуйста, выберите другую дату через команду /book",
             reply_markup=get_main_keyboard()
         )
@@ -344,11 +344,11 @@ async def process_date(message: Message, state: FSMContext):
         parse_mode="Markdown"
     )
     await state.set_state(BookingStates.waiting_for_time)
-    logger.info(f"Пользователь выбрал дату {date_str}, найдено слотов: {len(free_slots)}")
+    logger.info(f"Пользователь выбрал дату {date_str}, найдено окошек: {len(free_slots)}")
 
 @router.message(BookingStates.waiting_for_phone)
 async def process_phone(message: Message, state: FSMContext):
-    """Обработка ввода телефона и создание записи с уведомлением админов"""
+    # Обработка ввода телефона и создание записи с уведомлением админов
     if message.text == "❌ Отмена":
         await state.clear()
         await message.answer("❌ Запись отменена", reply_markup=get_main_keyboard())
@@ -435,7 +435,6 @@ async def process_phone(message: Message, state: FSMContext):
         
         for admin in admins:
             try:
-                # Используем message.bot вместо импорта bot
                 await message.bot.send_message(
                     chat_id=admin['telegram_id'],
                     text=f"📢 *Новая запись!*\n\n"
