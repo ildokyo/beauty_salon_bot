@@ -440,3 +440,44 @@ def get_all_bookings_admin():
             ORDER BY b.booking_date, b.booking_time
         ''')
         return cursor.fetchall()
+
+def get_active_bookings(telegram_id):
+    # Получает только активные (будущие) записи клиента
+    from datetime import datetime, timedelta
+    from utils import get_izhevsk_now
+    
+    today = get_izhevsk_now().date()
+    today_str = today.strftime("%d.%m.%Y")
+    
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT b.*, s.name as service_name, m.name as master_name, s.price
+            FROM bookings b
+            JOIN clients c ON b.client_id = c.client_id
+            JOIN services s ON b.service_id = s.service_id
+            JOIN masters m ON b.master_id = m.master_id
+            WHERE c.telegram_id = ? 
+              AND b.status = 'confirmed'
+              AND b.booking_date >= ?
+            ORDER BY b.booking_date, b.booking_time
+        ''', (telegram_id, today_str))
+        return cursor.fetchall()
+
+def hide_past_bookings():
+    # Помечает прошедшие записи как 'completed' (автоматически)
+    from datetime import datetime, timedelta
+    from utils import get_izhevsk_now
+    
+    today = get_izhevsk_now().date()
+    today_str = today.strftime("%d.%m.%Y")
+    
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE bookings 
+            SET status = 'completed' 
+            WHERE booking_date < ? AND status = 'confirmed'
+        ''', (today_str,))
+        conn.commit()
+        return cursor.rowcount

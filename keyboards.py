@@ -1,20 +1,20 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
 def get_main_keyboard():
-    # Главная клавиатура для клиента
     kb = [
         [KeyboardButton(text="💇‍♀️ Услуги"), KeyboardButton(text="👨‍🎨 Мастера")],
         [KeyboardButton(text="📅 Записаться"), KeyboardButton(text="📋 Мои записи")],
-        [KeyboardButton(text="ℹ️ О салоне"), KeyboardButton(text="📞 Контакты")]
+        [KeyboardButton(text="📚 История"), KeyboardButton(text="ℹ️ О салоне")],
+        [KeyboardButton(text="📞 Контакты")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
 def get_admin_keyboard():
-    # Главная клавиатура для администратора
     kb = [
         [KeyboardButton(text="👨‍🎨 Управление мастерами")],
         [KeyboardButton(text="💇‍♀️ Управление услугами")],
-        [KeyboardButton(text="📅 Добавить расписание"), KeyboardButton(text="📋 Все записи")],
+        [KeyboardButton(text="📅 Добавить расписание")],
+        [KeyboardButton(text="📋 Все записи"), KeyboardButton(text="📅 Записи по дате")],
         [KeyboardButton(text="👥 Управление админами")],
         [KeyboardButton(text="📢 Рассылка"), KeyboardButton(text="📝 Записать клиента")],
         [KeyboardButton(text="🚪 Выйти из админки"), KeyboardButton(text="◀️ Клиентское меню")]

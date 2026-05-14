@@ -62,6 +62,12 @@ def setup_scheduler():
             id="daily_reminders",
             replace_existing=True
         )
+        scheduler.add_job(
+            hide_past_bookings_job,
+            trigger=CronTrigger(hour=0, minute=5),
+            id="hide_past_bookings",
+            replace_existing=True
+        )
         
         scheduler.start()
         logger.info("🕐 Планировщик запущен. Напоминания в 19:00")
@@ -69,3 +75,10 @@ def setup_scheduler():
     except Exception as e:
         logger.error(f"❌ Ошибка запуска планировщика: {e}")
         return None
+
+async def hide_past_bookings_job():
+    # Автоматически скрывает прошедшие записи
+    from database import hide_past_bookings
+    count = hide_past_bookings()
+    if count > 0:
+        logger.info(f"🗑 Скрыто {count} прошедших записей")

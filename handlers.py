@@ -462,11 +462,18 @@ async def process_phone(message: Message, state: FSMContext):
 @router.message(Command("mybookings"))
 @router.message(F.text == "📋 Мои записи")
 async def cmd_my_bookings(message: Message):
-    bookings = get_client_bookings(message.from_user.id)
+    
+    # Сначала скрываем прошедшие записи
+    from database import hide_past_bookings
+    hide_past_bookings()
+    
+    # Получаем только активные записи
+    bookings = get_active_bookings(message.from_user.id)
     
     if not bookings:
         await message.answer(
-            "📋 У вас пока нет активных записей.\n\nЧтобы записаться, нажмите «📅 Записаться»",
+            "📋 У вас нет активных записей.\n\n"
+            "Чтобы записаться, нажмите «📅 Записаться»",
             reply_markup=get_main_keyboard()
         )
         return
@@ -486,6 +493,27 @@ async def cmd_my_bookings(message: Message):
             reply_markup=get_booking_actions_keyboard(booking['booking_id']),
             parse_mode="Markdown"
         )
+
+@router.message(Command("history"))
+async def cmd_history(message: Message):
+    # Показать все записи (включая прошедшие)   
+    from database import get_client_bookings
+    
+    bookings = get_client_bookings(message.from_user.id)
+    
+    if not bookings:
+        await message.answer("📭 История пуста")
+        return
+    
+    text = "📚 *История всех записей:*\n\n"
+    for booking in bookings:
+        status_icon = "✅" if booking['status'] == 'completed' else "⏳"
+        text += f"{status_icon} *{booking['booking_date']}* {booking['booking_time']}\n"
+        text += f"   💇‍♀️ {booking['service_name']}\n"
+        text += f"   👨‍🎨 {booking['master_name']}\n"
+        text += f"   💰 {booking['price']}₽\n\n"
+    
+    await message.answer(text, parse_mode="Markdown")
 
 @router.callback_query(F.data.startswith("cancel_booking_"))
 async def cancel_booking_callback(callback: CallbackQuery):

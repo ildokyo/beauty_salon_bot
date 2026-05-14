@@ -61,6 +61,9 @@ class AdminBookingStates(StatesGroup):
     waiting_for_date = State()
     waiting_for_time = State()
 
+class AdminViewBookingsStates(StatesGroup):
+    waiting_for_date = State()
+
 # ============ АДМИН ПАНЕЛЬ ============
 
 @router.message(Command("admin"))
@@ -1303,18 +1306,152 @@ async def generate_schedule_end_time(message: Message, state: FSMContext):
     except ValueError:
         await message.answer("❌ Неверный формат времени. Используйте ЧЧ:ММ", reply_markup=get_cancel_keyboard())
     
-@router.message(Command("test_remind"))
-async def test_remind(message: Message):
+# ============ ПРОСМОТР ЗАПИСЕЙ ПО ДАТЕ ============
+
+@router.message(F.text == "📅 Записи по дате")
+async def cmd_view_bookings_by_date(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
-        await message.answer("⛔ Только для админов")
+        await message.answer("⛔ Доступно только администраторам")
         return
     
-    await message.answer("🔄 Проверяю записи на завтра...")
+    await message.answer(
+        "📅 *Просмотр записей по дате*\n\n"
+        "Введите дату в формате ДД.ММ.ГГГГ\n"
+        "Например: 15.05.2026\n\n"
+        "Или нажмите «Отмена»",
+        reply_markup=get_cancel_keyboard(),
+        parse_mode="Markdown"
+    )
+    await state.set_state(AdminViewBookingsStates.waiting_for_date)
+
+@router.message(AdminViewBookingsStates.waiting_for_date)
+async def process_view_bookings_by_date(message: Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("❌ Просмотр отменен", reply_markup=get_admin_keyboard())
+        return
     
-    # Импортируем функцию
-    from scheduler import send_daily_reminders
+    date_str = message.text.strip()
     
-    # Запускаем проверку
-    await send_daily_reminders()
+    try:
+        datetime.strptime(date_str, "%d.%m.%Y")
+    except ValueError:
+        await message.answer(
+            "❌ Неверный формат даты. Используйте ДД.ММ.ГГГГ\n"
+            "Например: 15.05.2026",
+            reply_markup=get_cancel_keyboard()
+        )
+        return
     
-    await message.answer("✅ Тест завершён. Смотри логи на Bothost.")
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT b.*, c.name as client_name, c.phone,
+                   s.name as service_name, m.name as master_name
+            FROM bookings b
+            JOIN clients c ON b.client_id = c.client_id
+            JOIN services s ON b.service_id = s.service_id
+            JOIN masters m ON b.master_id = m.master_id
+            WHERE b.booking_date = ? AND b.status = 'confirmed'
+            ORDER BY b.booking_time
+        ''', (date_str,))
+        bookings = cursor.fetchall()
+    
+    if not bookings:
+        await message.answer(
+            f"📭 На {date_str} нет записей",
+            reply_markup=get_admin_keyboard()
+        )
+        await state.clear()
+        return
+    
+    today = datetime.now().date()
+    selected_date = datetime.strptime(date_str, "%d.%m.%Y").date()
+    
+    if selected_date == today:
+        header = f"📅 *Записи на СЕГОДНЯ ({date_str}):*\n\n"
+    else:
+        header = f"📅 *Записи на {date_str}:*\n\n"
+    
+    text = header
+    for booking in bookings:
+        text += f"🔹 {booking['booking_time']} — {booking['client_name']}\n"
+        text += f"   💇‍♀️ {booking['service_name']}\n"
+        text += f"   👨‍🎨 {booking['master_name']}\n"
+        text += f"   📞 {booking['phone'] or 'не указан'}\n\n"
+    
+    await message.answer(text, parse_mode="Markdown", reply_markup=get_admin_keyboard())
+    await state.clear()
+
+# ============ ПРОСМОТР ЗАПИСЕЙ НА СЕГОДНЯ ============
+
+@router.message(F.text == "📋 Все записи")
+async def cmd_all_bookings(message: Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Доступно только администраторам")
+        return
+    
+    kb = [
+        [KeyboardButton(text="📅 На сегодня")],
+        [KeyboardButton(text="📅 Выбрать дату")],
+        [KeyboardButton(text="🔙 Назад в админку")]
+    ]
+    await message.answer(
+        "📋 *Просмотр записей*\n\nВыберите вариант:",
+        reply_markup=ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True),
+        parse_mode="Markdown"
+    )
+
+@router.message(F.text == "📅 На сегодня")
+async def cmd_today_bookings(message: Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Доступно только администраторам")
+        return
+    
+    today = datetime.now().strftime("%d.%m.%Y")
+    
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT b.*, c.name as client_name, c.phone,
+                   s.name as service_name, m.name as master_name
+            FROM bookings b
+            JOIN clients c ON b.client_id = c.client_id
+            JOIN services s ON b.service_id = s.service_id
+            JOIN masters m ON b.master_id = m.master_id
+            WHERE b.booking_date = ? AND b.status = 'confirmed'
+            ORDER BY b.booking_time
+        ''', (today,))
+        bookings = cursor.fetchall()
+    
+    if not bookings:
+        await message.answer(
+            f"📭 На сегодня ({today}) нет записей",
+            reply_markup=get_admin_keyboard()
+        )
+        return
+    
+    text = f"📅 *Записи на СЕГОДНЯ ({today}):*\n\n"
+    for booking in bookings:
+        text += f"🔹 {booking['booking_time']} — {booking['client_name']}\n"
+        text += f"   💇‍♀️ {booking['service_name']}\n"
+        text += f"   👨‍🎨 {booking['master_name']}\n"
+        text += f"   📞 {booking['phone'] or 'не указан'}\n\n"
+    
+    await message.answer(text, parse_mode="Markdown", reply_markup=get_admin_keyboard())
+
+@router.message(F.text == "📅 Выбрать дату")
+async def cmd_choose_date(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Доступно только администраторам")
+        return
+    
+    await message.answer(
+        "📅 *Просмотр записей по дате*\n\n"
+        "Введите дату в формате ДД.ММ.ГГГГ\n"
+        "Например: 15.05.2026",
+        reply_markup=get_cancel_keyboard(),
+        parse_mode="Markdown"
+    )
+    await state.set_state(AdminViewBookingsStates.waiting_for_date)
+
